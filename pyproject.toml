@@ -4,9 +4,13 @@ version = "0.1.0"
 description = "A bridge for integrating Trapper with Zooniverse projects"
 authors = ["ijfviana <ijfviana@gmail.com>"]
 readme = "README.md"
+packages = [{ include = "trapper_zooniverse" }]
+
 
 [tool.poetry.scripts]
 trapper-zooniverse = "trapper_zooniverse.main:app"
+build-docs = "utils.docs:build_docs"
+
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.14"
@@ -19,6 +23,8 @@ trapper-client = {git = "https://github.com/ijfvianauhu/trapper-client.git"}
 pyjson = "^1.4.1"
 pydantic = "^2.12.0"
 
+[tool.poetry.group.dev.dependencies]
+pdoc = "^15.0.4"
 
 [build-system]
 requires = ["poetry-core"]
