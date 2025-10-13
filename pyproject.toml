@@ -10,7 +10,7 @@ packages = [{ include = "trapper_zooniverse" }]
 [tool.poetry.scripts]
 trapper-zooniverse = "trapper_zooniverse.main:app"
 build-docs = "utils.docs:build_docs"
-
+extract-pot = "utils.i18n:extract_translations"
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.14"
@@ -25,6 +25,9 @@ pydantic = "^2.12.0"
 
 [tool.poetry.group.dev.dependencies]
 pdoc = "^15.0.4"
+babel = "^2.17.0"
+python-gettext = "^5.0"
+polib = "^1.2.0"
 
 [build-system]
 requires = ["poetry-core"]
