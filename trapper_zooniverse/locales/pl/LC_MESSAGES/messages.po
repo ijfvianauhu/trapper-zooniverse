@@ -10,13 +10,14 @@ msgstr ""
 "POT-Creation-Date: 2025-10-13 23:06+0200\n"
 "PO-Revision-Date: 2025-10-13 22:04+0000\n"
 "Last-Translator: Anonymous <noreply@weblate.org>\n"
-"Language-Team: English <https://hosted.weblate.org/projects/"
-"trapper-zooniverse/trapper-zooniverse-github/en/>\n"
-"Language: en\n"
+"Language-Team: Polish <https://hosted.weblate.org/projects/"
+"trapper-zooniverse/trapper-zooniverse-github/pl/>\n"
+"Language: pl\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=2; plural=n != 1;\n"
+"Plural-Forms: nplurals=3; plural="
+"(n==1 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 "X-Generator: Weblate 5.14-dev\n"
 "Generated-By: Babel 2.17.0\n"
 
@@ -25,111 +26,109 @@ msgid ""
 "CLI for uploading images from Trapper to Zooniverse and upload Zooniverse"
 " results to Trapper"
 msgstr ""
-"CLI for uploading images from Trapper to Zooniverse and upload Zooniverse "
-"results to Trapper"
 
 #: trapper_zooniverse/main.py:204
 msgid "Show log file content"
-msgstr "Show log file content"
+msgstr ""
 
 #: trapper_zooniverse/main.py:220
 msgid "Show current configuration"
-msgstr "Show current configuration"
+msgstr ""
 
 #: trapper_zooniverse/main.py:226
 msgid "Configuration"
-msgstr "Configuration"
+msgstr ""
 
 #: trapper_zooniverse/main.py:227
 msgid "Section"
-msgstr "Section"
+msgstr ""
 
 #: trapper_zooniverse/main.py:228
 msgid "Key"
-msgstr "Key"
+msgstr ""
 
 #: trapper_zooniverse/main.py:229
 msgid "Value"
-msgstr "Value"
+msgstr ""
 
 #: trapper_zooniverse/main.py:241
 msgid "Set a configuration parameter"
-msgstr "Set a configuration parameter"
+msgstr ""
 
 #: trapper_zooniverse/main.py:265
 msgid "List all upload reports"
-msgstr "List all upload reports"
+msgstr ""
 
 #: trapper_zooniverse/main.py:265
 msgid "List upload reports"
-msgstr "List upload reports"
+msgstr ""
 
 #: trapper_zooniverse/main.py:278
 msgid "Upload Reports"
-msgstr "Upload Reports"
+msgstr ""
 
 #: trapper_zooniverse/main.py:279
 msgid "File name"
-msgstr "File name"
+msgstr ""
 
 #: trapper_zooniverse/main.py:280
 msgid "SubjectSet"
-msgstr "SubjectSet"
+msgstr ""
 
 #: trapper_zooniverse/main.py:281
 msgid "Start time"
-msgstr "Start time"
+msgstr ""
 
 #: trapper_zooniverse/main.py:282
 msgid "End time"
-msgstr "End time"
+msgstr ""
 
 #: trapper_zooniverse/main.py:283
 msgid "Saved at"
-msgstr "Saved at"
+msgstr ""
 
 #: trapper_zooniverse/main.py:303
 msgid "Show details of an upload report"
-msgstr "Show details of an upload report"
+msgstr ""
 
 #: trapper_zooniverse/main.py:303
 msgid "Show an upload report"
-msgstr "Show an upload report"
+msgstr ""
 
 #: trapper_zooniverse/main.py:307
 msgid "Name of the YAML report file to display (optional)"
-msgstr "Name of the YAML report file to display (optional)"
+msgstr ""
 
 #: trapper_zooniverse/main.py:342
 msgid "Test the login form"
-msgstr "Test the login form"
+msgstr ""
 
 #: trapper_zooniverse/main.py:353
 msgid "Starting login test"
-msgstr "Starting login test"
+msgstr ""
 
 #: trapper_zooniverse/main.py:376 trapper_zooniverse/main.py:377
 #: trapper_zooniverse/main.py:416
 msgid "Retrieve all subset_sets from Zooniverse"
-msgstr "Retrieve all subset_sets from Zooniverse"
+msgstr ""
 
 #: trapper_zooniverse/main.py:415
 msgid "Retrieve all subjects from Zooniverse"
-msgstr "Retrieve all subjects from Zooniverse"
+msgstr ""
 
 #: trapper_zooniverse/main.py:444
 msgid "Retrieve all collections from trapper"
-msgstr "Retrieve all collections from trapper"
+msgstr ""
 
 #: trapper_zooniverse/main.py:445
 msgid "This command allows users to fetch collections from trapper."
-msgstr "This command allows users to fetch collections from trapper."
+msgstr ""
 
 #: trapper_zooniverse/main.py:471
 msgid "Retrieving collection from Trapper"
-msgstr "Retrieving collection from Trapper"
+msgstr ""
 
 #: trapper_zooniverse/main.py:483 trapper_zooniverse/main.py:484
 #: trapper_zooniverse/main.py:611 trapper_zooniverse/main.py:612
 msgid "Upload all media collection from Trapper to Zooniverse"
-msgstr "Upload all media collection from Trapper to Zooniverse"
+msgstr ""
