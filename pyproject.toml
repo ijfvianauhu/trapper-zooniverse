@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "trapper-zooniverse"
+version = "0.1.0"
+description = "A bridge for integrating Trapper with Zooniverse projects"
+authors = ["ijfviana <ijfviana@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.scripts]
+trapper-zooniverse = "trapper_zooniverse.main:app"
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.14"
+pytest = "^8.4.2"
+typer-config = "^1.4.2"
+panoptes-client = "^1.7.1"
+python-dotenv = "^1.1.1"
+pyyaml = "^6.0.3"
+trapper-client = {git = "https://github.com/ijfvianauhu/trapper-client.git"}
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
