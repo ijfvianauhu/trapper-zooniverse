@@ -11,7 +11,8 @@ packages = [{ include = "trapper_zooniverse" }]
 trapper-zooniverse = "trapper_zooniverse.main:app"
 build-docs = "utils.docs:build_docs"
 extract-pot = "utils.i18n:extract_translations"
-init-po = "utils.i18n:init_translation"
+update-po = "utils.i18n:init_translation"
+compile-mo = "utils.i18n:compile_translations"
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.14"

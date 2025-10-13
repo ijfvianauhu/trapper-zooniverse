@@ -46,3 +46,14 @@ def init_translation(lang="en"):
         ], check=True)
         print(f"Archivo PO actualizado para idioma {lang} en {po_file}")
 
+def compile_translations():
+    """
+    Compila todos los archivos PO a MO para que Python pueda usarlos.
+    """
+    locales_dir = "trapper_zooniverse/locales"
+    subprocess.run([
+        "pybabel",
+        "compile",
+        "-d", locales_dir
+    ], check=True)
+    print("Todos los archivos PO han sido compilados a MO")
