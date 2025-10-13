@@ -6,6 +6,8 @@ from typing import TypedDict, List, Dict, Tuple, Any
 import logging, os
 import tempfile
 from trapper_client.TrapperClient import TrapperClient
+from trapper_client.Schemas import TrapperMediaList, TrapperObservationList
+
 from trapper_zooniverse.ZooniverseClient import ZooniverseClient, UploadReport
 import urllib
 
@@ -86,10 +88,17 @@ class TrapperZooniverseConnector:
         start_time = datetime.now().isoformat()
         self.logger.debug(f"Starting upload_collection at {start_time}")
 
-        media=self.trapper.media.get_by_classification_project_and_collection(classification_project, collection),
-        observations=self.trapper.observations.get_by_classification_project_and_collection(classification_project, collection)
+        media:TrapperMediaList=self.trapper.media.get_by_classification_project_and_collection(classification_project, collection)
+        self.logger.debug(
+            f"Obtained {len(media.results)} media from classification project  {classification_project} and collection {collection}")
+
+        observations:TrapperObservationList=self.trapper.observations.get_by_classification_project_and_collection(classification_project, collection)
+        self.logger.debug(
+            f"Obtained {len(observations.results)} observations from classification project  {classification_project} and collection {collection}")
 
         media_map=self._merge_media_and_observations(media,observations)
+        self.logger.debug(
+            f"Obtained {len(media_map.keys())} observations_media from classification project  {classification_project} and collection {collection}")
 
         self.logger.debug("Preparando las secuencias")
         sequences = self._generate_zoo_images_from_media_map(media_map, max_interval, n_images_seq)
@@ -191,8 +200,8 @@ class TrapperZooniverseConnector:
         return False
 
     def _merge_media_and_observations( self,
-            media,
-            observations
+            media :TrapperMediaList,
+            observations: TrapperObservationList
     ) -> Dict[str, MediaObservationEntry]:
         """
         Merge media and observations into a single dictionary keyed by mediaID.
