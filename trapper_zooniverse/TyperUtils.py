@@ -327,7 +327,7 @@ class TyperUtils:
             yaml.safe_dump(asdict(report), f, sort_keys=False, allow_unicode=True)
 
     @staticmethod
-    def load_yaml(filename: str):
+    def load_yaml(filename: PosixPath):
         """Carga un informe desde un archivo YAML."""
         with open(filename, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)

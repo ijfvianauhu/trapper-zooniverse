@@ -15,10 +15,12 @@ from rich.table import Table
 from rich.console import Console
 from typer_config import use_yaml_config
 import time
+
+from trapper_zooniverse.TrapperZooniverseConnector import TrapperZooniverseConnector
 from trapper_zooniverse.TyperUtils import TyperUtils
 from trapper_client.TrapperClient import TrapperClient
 from trapper_zooniverse.ZooniverseClient import ZooniverseClient, UploadReport
-from trapper_zooniverse.ZooniverseClient import MediaObservationEntry
+from trapper_zooniverse.TrapperZooniverseConnector import MediaObservationEntry
 
 console = Console()
 TyperUtils.console = console
@@ -26,79 +28,29 @@ logger = logging.getLogger(__name__)
 _ = gettext.gettext
 
 
-def _merge_media_and_observations(
-    media,
-    observations
-) -> Dict[str, MediaObservationEntry]:
-    """
-    Merge media and observations into a single dictionary keyed by mediaID.
-
-    Parameters
-    ----------
-    results : tuple
-        Tuple containing (media, observations) results, usually from run_tasks_with_progress.
-    cp_pk : int
-        Classification project ID (for logging purposes).
-    collection : int
-        Collection ID (for logging purposes).
-
-    Returns
-    -------
-    Dict[str, MediaObservationEntry]
-        Dictionary mapping mediaID to its media data and associated observation types.
-    """
-
-
-    media_map: Dict[str, MediaObservationEntry] = {}
-
-    # Seleccionar campos relevantes de media
-    for m in getattr(media, "results", []):
-        media_map[str(m.mediaID)] = {
-            "filePath": str(getattr(m, "filePath", "")),
-            "filePublic": getattr(m, "filePublic", False),
-            "fileName": getattr(m, "fileName", ""),
-            "deploymentID": getattr(m, "deploymentID", ""),
-            "fileMediatype": getattr(m, "fileMediatype", ""),
-            "timestamp": getattr(m, "timestamp", ""),
-            "observationTypes": []
-        }
-
-    # Añadir tipos de observación a cada media
-    for obs in getattr(observations, "results", []):
-        media_id = str(obs.mediaID)
-
-        if media_id not in media_map:
-            TyperUtils.fatal(f"{media_id} has observations but no media!")
-            continue
-
-        obs_type = getattr(obs, "observationType", None)
-        if obs_type:
-            if isinstance(obs_type, list):
-                media_map[media_id]["observationTypes"].extend(obs_type)
-            else:
-                media_map[media_id]["observationTypes"].append(obs_type)
-
-    return media_map
-
-
-class PartialTimeColumn(ProgressColumn):
-    """Muestra el tiempo parcial de cada fichero en segundos."""
-    def render(self, task):
-        if "partial_start" in task.fields:
-            elapsed = time.time() - task.fields["partial_start"]
-            return Text(f"{elapsed:.2f}s", style="magenta")
-        return Text("0.00s", style="magenta")
-
 APP_NAME="trapper-zooniverse"
 
 app = typer.Typer(help=_("CLI for uploading images from Trapper to Zooniverse and upload Zooniverse results to Trapper"), rich_markup_mode='markdown')
-
 
 def get_default_config_file() -> Path:
     """Obtiene la ruta al fichero de configuración por defecto."""
     app_dir = Path(typer.get_app_dir(APP_NAME))
     app_dir.mkdir(parents=True, exist_ok=True)
     return app_dir / "config.yaml"
+
+def get_default_upload_reports_dir() -> Path:
+    """Obtiene la ruta al fichero de contable.add_row(
+            str(getattr(export_obj, "export_type", "N/A")),
+            str(getattr(export_obj, "id", "N/A")),
+            str(getattr(export_obj, "state", "unknown")),
+            str(getattr(export_obj, "created_at", "N/A")),
+            str(getattr(export_obj, "updated_at", "N/A")),
+            str(getattr(export_obj, "url", "N/A")),
+        )figuración por defecto."""
+    app_dir = Path(typer.get_app_dir(APP_NAME))
+    results_dir = app_dir / "upload_results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    return results_dir
 
 def ensure_config_file() -> Path:
     """Crea el fichero de configuración con valores por defecto si no existe
@@ -239,12 +191,14 @@ def common_setup(
         password= zooniverse_password if zooniverse_password else None,
     )
 
+    connector = TrapperZooniverseConnector(zooniverse_client, trapper_client)
 
     ctx.obj = {
         "logger": logging.getLogger(__name__),
         "_": _,
         "trapper_client": trapper_client,
-        "zooniverse_client": zooniverse_client
+        "zooniverse_client": zooniverse_client,
+        "connector":connector
     }
 
 @app.command("show-logger", help=_("Show log file content"), short_help=_("Show log file content"))
@@ -308,18 +262,12 @@ def set_config(key: str, value: str):
 
     TyperUtils.success(_(f"Configuration updated in {config_file}"))
 
-@app.command("list-upload-reports", help=_("List all upload reports"), short_help=_("List upload reports"))
-def list_upload_reports():
+@app.command("upload-reports", help=_("List all upload reports"), short_help=_("List upload reports"))
+def upload_reports():
     """
     List all YAML upload reports saved in the same directory as the configuration file.
     """
-    config_file = ensure_config_file()
-    config_dir = Path(config_file).parent
-    results_dir = config_dir / "upload_results"
-
-    if not results_dir.exists():
-        console.print(f"[red]❌ No results directory found at:[/red] {results_dir}")
-        raise typer.Exit(code=1)
+    results_dir = get_default_upload_reports_dir()
 
     yaml_files = sorted(results_dir.glob("upload_report_*.yaml"), key=lambda p: p.stat().st_mtime, reverse=True)
 
@@ -352,8 +300,8 @@ def list_upload_reports():
 
     console.print(table)
 
-@app.command("show-upload-report", help=_("Show details of an upload report"), short_help=_("Show an upload report"))
-def show_upload_report(
+@app.command("upload-report", help=_("Show details of an upload report"), short_help=_("Show an upload report"))
+def upload_report(
     filename: Annotated[
         str,
         typer.Argument(help=_("Name of the YAML report file to display (optional)"))
@@ -363,14 +311,8 @@ def show_upload_report(
     Show details of an upload report stored in the results/ directory.
     If no filename is given, the most recent report will be shown.
     """
-    config_file = ensure_config_file()
-    config_dir = Path(config_file).parent
-    results_dir = config_dir / "upload_results"
+    results_dir = get_default_upload_reports_dir()
     target_file = None
-
-    if not results_dir.exists():
-        console.print(f"[red]❌ No results directory found at:[/red] {results_dir}")
-        raise typer.Exit(code=1)
 
     # Si el usuario no pasa ningún archivo → mostrar el último
     if filename is None:
@@ -380,25 +322,22 @@ def show_upload_report(
             reverse=True
         )
         if not yaml_files:
-            console.print(f"[yellow]⚠️ No upload reports found in:[/yellow] {results_dir}")
-            raise typer.Exit()
+            TyperUtils.fatal(f"No upload reports found in: {results_dir}")
+
         target_file = yaml_files[0]
-        console.print(f"[cyan]📄 Showing latest report:[/cyan] [bold]{target_file.name}[/bold]")
+        TyperUtils.info(_(f"Showing latest report: {target_file.name}"))
     else:
         target_file = results_dir / filename
         if not target_file.exists():
-            console.print(f"[red]❌ Report file not found:[/red] {target_file}")
-            raise typer.Exit(code=1)
+            TyperUtils.fatal(f"Report file not found:{target_file}")
 
     # Cargar el YAML y mostrar el informe con Rich
     try:
         report = TyperUtils.load_yaml(target_file)
         TyperUtils.display_report(report)
-        console.print(f"\n[green]✅ Report loaded from:[/green] [bold]{target_file}[/bold]\n")
+        TyperUtils.success(f"Report loaded from: {target_file}\n")
     except Exception as e:
-        console.print(f"[red]❌ Failed to load report:[/red] {e}")
-        raise typer.Exit(code=1)
-
+        TyperUtils.fatal(f"Failed to load report {e}")
 
 @app.command(help=_("Test the login form"), short_help=_("Test the login form"))
 @use_yaml_config(section=["login"], default_value=ensure_config_file())
@@ -438,29 +377,39 @@ def login(
     short_help=_("Retrieve all subset_sets from Zooniverse"))
 def subset_sets(
         ctx: typer.Context,
+        with_exports: Annotated[bool, typer.Option(help="Only show subjetsts with exports")] = False,
 ):
     # TyperUtils.info(_("Starting login test"))
     zooniverse_client = ctx.obj["zooniverse_client"]
 
-    results = TyperUtils.run_tasks_with_progress(
-        [
-            {
-                "description": _(f"Login to Zooniverse {zooniverse_client.project_id}"),
-                "func" : zooniverse_client.connect,
-                "args": (),
-            },
+    tasks = []
 
+    tasks.append(
+        {
+            "description": _(f"Login to Zooniverse {zooniverse_client.project_id}"),
+            "func" : zooniverse_client.connect,
+            "args": (),
+        }
+    )
+
+    if not with_exports:
+        tasks.append(
             {
-                "description": _(f"Getting subset_sets from Zooniverse {zooniverse_client.project_id}"),
+                "description": _(f"Getting subjectsets from Zooniverse {zooniverse_client.project_id}"),
                 "func": zooniverse_client.subjectsets.get_all,
                 "args": (),
             }
-
-        ]
-    )
-
+        )
+    else:
+        tasks.append(
+                {
+                    "description": _(f"Getting subjectssets with exports from Zooniverse {zooniverse_client.project_id}"),
+                    "func": zooniverse_client.subjectsets.with_exports,
+                    "args": (),
+                }
+            )
+    results = TyperUtils.run_tasks_with_progress(tasks)
     TyperUtils.show_subject_sets_table(results[1])
-
 
 @app.command("subjects",
     help=_("Retrieve all subjects from Zooniverse"),
@@ -490,11 +439,6 @@ def subjects(
     )
 
     TyperUtils.show_subjects_table(results[1], title= "Subjects")
-
-
-
-#TyperUtils.show_objects_table(results[1], title = "Subjects Table")
-
 
 @app.command("collections",
     short_help=_("Retrieve all collections from trapper"),
@@ -582,6 +526,7 @@ def upload_collection(
     """
     trapper_client = ctx.obj["trapper_client"]
     zooniverse_client = ctx.obj["zooniverse_client"]
+    connector:TrapperZooniverseConnector = ctx.obj["connector"]
     logger = ctx.obj["logger"]
     _ = ctx.obj["_"]
 
@@ -633,36 +578,6 @@ def upload_collection(
 
     logger.debug(_(f"Using subjectset name: {subjectset_name}"))
 
-    results = TyperUtils.run_tasks_with_progress(
-        [
-            {
-                "description": f"Obteniendo los media para el proyecto de clasificacion {cp_selected.pk} y la coleccion colección {collection}",
-                "func": trapper_client.media.get_by_classification_project_and_collection,
-                "args": (cp_selected.pk, collection),
-            },
-
-            {
-                "description": _(f"Obteniendo las observaciones para el proyecto de clasificacion {cp_selected.pk} y la coleccion {collection}"),
-                "func": trapper_client.observations.get_by_classification_project_and_collection,
-                "args": (cp_selected.pk, collection),
-            },
-
-        ]
-    )
-
-    results = TyperUtils.run_tasks_with_progress(
-        [
-            {
-                "description": _(f"Mezclando los datos de loas media y las observaciones para el proyecto de clasificacion {cp_selected.pk} y la coleccion colección {collection}"),
-                "func": _merge_media_and_observations,
-                "args": (results[0], results[1]),
-            },
-        ]
-    )
-
-    logger.debug(_(f"Found {len(results[0])} media items with observations for classification project {cp_selected.pk} and collection {collection}"))
-
-    media_map = results[0]
 
     results = TyperUtils.run_tasks_with_progress(
         [
@@ -674,8 +589,8 @@ def upload_collection(
 
             {
                 "description": _(f"Uploading collection {collection} to Zooniverse {zooniverse_client.project_id} in subjectset {subjectset_name}"),
-                "func": zooniverse_client.upload_collection,
-                "args": (subjectset_name,media_map,None, n_images_seq, max_interval, attempts, delay, max_attempts_per_subject, delay_seconds_per_subject),
+                "func": connector.upload_collection,
+                "args": (subjectset_name,collection,cp_selected.pk, None, n_images_seq, max_interval, attempts, delay, max_attempts_per_subject, delay_seconds_per_subject),
             }
         ]
     )
@@ -691,6 +606,52 @@ def upload_collection(
     TyperUtils.save_yaml(results[1], PosixPath(report_file))
     TyperUtils.display_report(results[1])
     TyperUtils.success(_(f"Report saved at: {report_file}"))
+
+@app.command("annotations",
+    short_help=_("Upload all media collection from Trapper to Zooniverse"),
+    help=_("Upload all media collection from Trapper to Zooniverse")
+)
+#@use_yaml_config(section=["download_subject"], default_value=ensure_config_file())
+def annotations(
+        ctx: typer.Context,
+        subjectset_id: Annotated[int, typer.Argument(help=("Collection ID"))] = None,
+):
+    trapper_client = ctx.obj["trapper_client"]
+    zooniverse_client = ctx.obj["zooniverse_client"]
+    connector:TrapperZooniverseConnector = ctx.obj["connector"]
+    logger = ctx.obj["logger"]
+    _ = ctx.obj["_"]
+
+    tasks = []
+
+    tasks.append(
+        {
+            "description": _(f"Login to Zooniverse {zooniverse_client.project_id}"),
+            "func" : zooniverse_client.connect,
+            "args": (),
+        }
+    )
+
+    if not subjectset_id:
+        tasks.append(
+            {
+                "description": _(f"Getting all anotations from Zooniverse {zooniverse_client.project_id}"),
+                "func": zooniverse_client.annotations.get_all,
+                "args": (),
+            }
+        )
+    else:
+        tasks.append(
+                {
+                    "description": _(f"Getting annotations for {subjectset_id} from Zooniverse {zooniverse_client.project_id}"),
+                    "func": zooniverse_client.annotations.get_by_subjectset,
+                    "args": (subjectset_id),
+                }
+            )
+    results = TyperUtils.run_tasks_with_progress(tasks)
+
+    pass
+
 
 if __name__ == "__main__":
     app()

@@ -1,25 +1,12 @@
 import os
 import time
-import urllib.request
-import tempfile
 import logging
-from random import random
-from typing import List, Dict, Any, Tuple, TypedDict
+from typing import List, Dict, Any, Tuple, TypedDict, Counter, Optional
 from dataclasses import dataclass, field, asdict
-from collections import defaultdict
-import random
+import json
 import panoptes_client as pc
 from panoptes_client import SubjectSet, Subject, Project
-from datetime import datetime
-
-class MediaObservationEntry(TypedDict):
-    filePath: str
-    filePublic: bool
-    fileName: str
-    timestamp: datetime
-    deploymentID: str
-    fileMediatype : str
-    observationTypes: List[str]
+from pydantic import BaseModel
 
 @dataclass
 class UploadReport:
@@ -46,7 +33,6 @@ class UploadReport:
             f"Downloaded: {len(self.download_images)}\n"
             f"Download failed: {len(self.download_failed)}"
         )
-
 
 class ZooniverseClientComponent:
     def __init__(self, client = None):
@@ -123,7 +109,7 @@ class SubjectSetsComponent(ZooniverseClientComponent):
         """
 
         subject_sets = self.get_all()
-        return any(ss.display_name == name for ssMediaObservationEntry in subject_sets)
+        return any(ss.display_name == name for ss in subject_sets)
 
     def create(self, name:str):
         """
@@ -147,6 +133,35 @@ class SubjectSetsComponent(ZooniverseClientComponent):
 
         return subject_set
 
+    def with_exports(self) -> List:
+        return self.with_results()
+
+    def with_results(self) -> List:
+        """
+        Devuelve los subjetsts que tienen resultados.
+
+        Parameters
+        ----------
+        name : str
+            Nombre del SubjectSet a buscar.
+
+        Returns
+        -------
+        bool
+            True si existe, False en caso contrario.
+        """
+
+        subject_sets = self.get_all()
+        selected = []
+        for ss in subject_sets:
+            # Check if classifications export exists
+            try:
+                export = ss.get_export("classifications", wait=False)  # don't wait for generation
+                selected.append(ss)
+            except Exception as e:
+                pass
+
+        return selected
 #
 # SubjectsComponent
 #
@@ -223,7 +238,8 @@ class SubjectsComponent(ZooniverseClientComponent):
 
         Parameters
         ----------
-        file_paths : list[str]
+        file_paths : list[str]from datetime import datetime
+
             Paths to the image files to upload.
         subject_set : SubjectSet
             The Zooniverse SubjectSet to which subjects will be added.
@@ -266,7 +282,7 @@ class SubjectsComponent(ZooniverseClientComponent):
                 break
 
             if attempt < attempts:
-                self.client.logger.error(f"Error uploading subjects {e}")
+                self.client.logger.error(f"Error uploading subjects")
                 wait_time = delay * (2 ** (attempt - 1))
                 time.sleep(wait_time)
                 remaining_files = current_failed  # Volver a intentar sólo las fallidas
@@ -276,6 +292,106 @@ class SubjectsComponent(ZooniverseClientComponent):
 
         return (all_subjects, failed_files)
 
+#
+# AnnotationsComponent
+#
+
+class SubjectResult(BaseModel):
+    subject_id: int
+    filename: str
+    retired: bool
+    annotations: List[dict]
+    most_common_annotation: Optional[dict] = None
+    votes: int = 0
+
+class SubjectSetResults(BaseModel):
+    subjects: List[SubjectResult]
+    total_subjects: int
+    retired_subjects: int
+
+class AnnotationsComponent(ZooniverseClientComponent):
+
+    def get_all(self):
+        project = Project.find(self.client.project_id)
+        subject_sets = SubjectSet.where(project_id=project.id)
+        anotations = []
+
+        for subject_set in subject_sets:
+            try:
+                export = subject_set.get_export("classifications", wait=False)  # don't wait for generation
+                if export:
+                    self.client.logger.debug(f"SubjectSet {subject_set.display_name} has classifications export.")
+                    anotations.append((subject_set.id, export))
+                else:
+                    self.client.logger.debug(f"SubjectSet {subject_set.display_name} has no classifications export.")
+            except Exception as e:
+                self.client.logger.debug(f"SubjectSet {subject_set.display_name} has no classifications export.")
+
+        return anotations
+
+
+    def get_by_subjectset(self, subjectset_id: int, votes: bool=True) -> SubjectSetResults:
+        """
+        Fetches the results of all subjects in a SubjectSet as Pydantic models.
+
+        :param subject_set_id: Zooniverse SubjectSet ID
+        :param votes: If True, calculate the most , wait_timeout=600common annotation per subject
+        :return: SubjectSetResults
+        """
+        subject_set = SubjectSet.find(subjectset_id)
+
+        # Wait until export is ready
+        # export = subject_set.get_export('classifications', wait=True, wait_timeout=600)
+
+        export = subject_set.get_export('classifications', wait=False)
+        exit(1)
+
+        subjects_dict: Dict[int, SubjectResult] = {}
+        total = 0
+        retired_count = 0
+
+        for row in export.csv_dictreader():
+            try:
+                subject_id = int(row['subject_ids'].strip().split(',')[0])
+                annotations = json.loads(row['annotations'])
+                subject_data = json.loads(row['subject_data'])
+                metadata = subject_data.get(str(subject_id), {})
+                filename = metadata.get('Filename', 'unknown')
+                retired = bool(metadata.get('retired', False))
+
+                if subject_id not in subjects_dict:
+                    subjects_dict[subject_id] = SubjectResult(
+                        subject_id=subject_id,
+                        filename=filename,
+                        retired=retired,
+                        annotations=[]
+                    )
+                    total += 1
+                    if retired:
+                        retired_count += 1
+
+                subjects_dict[subject_id].annotations.append(annotations)
+
+            except Exception as e:
+                self.client.logger.warning(f"Failed to process row for subject_id {row.get('subject_ids')}: {e}")
+
+        # Compute votes / most common annotation
+        if votes:
+            for subject in subjects_dict.values():
+                if subject.annotations:
+                    flat_annotations = [json.dumps(a) for a in subject.annotations]
+                    counter = Counter(flat_annotations)
+                    most_common_str, count = counter.most_common(1)[0]
+                    subject.most_common_annotation = json.loads(most_common_str)
+                    subject.votes = count
+
+        results = SubjectSetResults(
+            subjects=list(subjects_dict.values()),
+            total_subjects=total,
+            retired_subjects=retired_count
+        )
+
+        return results
 
 #
 # ZooniverseClient
@@ -307,6 +423,7 @@ class ZooniverseClient:
 
         self.subjectsets: SubjectSetsComponent = SubjectSetsComponent(self)
         self.subjects: SubjectsComponent = SubjectsComponent(self)
+        self.annotations:AnnotationsComponent = AnnotationsComponent(self)
 
     @classmethod
     def from_environment(cls, temp_folder: str = "temp_images") -> "ZooniverseClient":
@@ -341,229 +458,9 @@ class ZooniverseClient:
             raise ValueError(
                 "Environment variables ZOONIVERSE_PROJECT_ID, ZOONIVERSE_USERNAME and ZOONIVERSE_PASSWORD must be set."
             )
-        return cls(project_id, username, password, temp_folder)
-
+        return cls(project_id, username, password)
 
     def connect(self):
         """Conecta a Zooniverse usando las credenciales proporcionadas."""
         pc.Panoptes.connect(username=self.username, password=self.password)
 
-    def upload_collection(
-            self,
-            subjectset_name: str,
-            collection_info: Dict[str, 'MediaObservationEntry'],
-            uploaded_file,
-            n_images_seq=5,
-            max_interval=120,
-            attempts=5,
-            delay=15,
-            max_attempts_per_subject=5,
-            delay_seconds_per_subject=30,
-    ) -> UploadReport:
-
-        start_time = datetime.now().isoformat()
-        self.logger.debug(f"Starting upload_collection at {start_time}")
-        self.logger.debug("Preparando las secuencias")
-        sequences = self._generate_zoo_images_from_media_map(collection_info, max_interval, n_images_seq)
-
-        uploaded_images = []
-        failed_uploads = []
-        skipped_human = []
-        skipped_private = []
-        download_images = []
-        download_failed = []
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            for idx, seq in enumerate(sequences):
-                is_first = idx == 0
-                is_last = idx == len(sequences) - 1
-
-                for media in seq:
-                    # Excluir si es privada
-                    if not media.get("filePublic", False):
-                        self.logger.warning(f"Excluyendo imagen privada {media['mediaID']} {media['filePath']}")
-                        skipped_private.append(media)
-                        continue
-
-                    # Excluir si no es animal (solo para secuencias intermedias)
-                    if not is_first and not is_last:
-                        obs_types = media.get("observationTypes", [])
-                        if any(o.lower() != "animal" for o in obs_types):
-                            self.logger.warning(
-                                f"Excluyendo {media['mediaID']} {media['filePath']} con tipos {media['observationTypes']}")
-                            skipped_human.append(media)
-                            continue
-
-                    extension = media['fileMediatype'].split("/")[1]
-                    name = f"{media['mediaID']}_x_{media['deploymentID']}_x_{media['fileName']}.{extension}"
-                    local_path = os.path.join(temp_dir, name)
-
-                    self.logger.debug(
-                        f"Descargando {media['mediaID']} ({media['filePath']}) a {local_path}")
-
-                    try:
-                        self._download_image(str(media['filePath']), local_path, attempts=5, delay_seconds=60)
-                        download_images.append(local_path)
-                        time.sleep(random.uniform(1, 4))
-                    except Exception as e:
-                        self.logger.error(f"Failed to download {media['mediaID']}: {e}")
-                        download_failed.append(media)
-
-            # Subir a Zooniverse
-            file_paths = [
-                os.path.join(temp_dir, f)
-                for f in os.listdir(temp_dir)
-                if os.path.isfile(os.path.join(temp_dir, f))
-            ]
-
-            self.connect()
-            self.logger.debug(f"Creando SubjectSet {subjectset_name} en Zooniverse")
-            subjectset = self.subjectsets.create(subjectset_name)
-
-            ok, fail = self.subjects.create_bulk(
-                file_paths,
-                subjectset,
-                attempts,
-                delay,
-                max_attempts_per_subject,
-                delay_seconds_per_subject,
-            )
-
-            uploaded_images.extend(ok)
-            failed_uploads.extend(fail)
-
-        end_time = datetime.now().isoformat()
-
-        report = UploadReport(
-            start_time=start_time,
-            end_time=end_time,
-            subjectset_name=subjectset_name,
-            uploaded_images=uploaded_images,
-            failed_uploads=failed_uploads,
-            skipped_human=skipped_human,
-            skipped_private=skipped_private,
-            download_images=download_images,
-            download_failed=download_failed,
-        )
-
-        self.logger.info(report.summary())
-
-        return report
-
-    def _download_image(self, url: str, dest_path: str, attempts=5, delay_seconds=60) -> bool:
-        """Descarga una imagen desde una URL con reintentos."""
-        for attempt in range(attempts):
-            try:
-                urllib.request.urlretrieve(url, dest_path)
-                return True
-            except Exception as e:
-                self.logger.error(f"Error downloading {url} (attempt {attempt + 1}/{attempts}): {e}")
-                if attempt < attempts - 1:
-                    time.sleep(delay_seconds)
-        return False
-
-    def _show_sequences_as_json(self,sequences):
-        """
-        Muestra una lista de secuencias (por ejemplo, listas de MediaObservationEntry)
-        formateadas en JSON con indentación jerárquica.
-        """
-
-        # Si los objetos tienen campos datetime, los convertimos a string
-        def default_serializer(obj):
-            if hasattr(obj, "isoformat"):
-                return obj.isoformat()
-            return str(obj)
-
-        import json
-        return (json.dumps(sequences, indent=4, default=default_serializer))
-
-    def _generate_zoo_images_from_media_map(self, media_map: Dict[str, MediaObservationEntry], max_interval, n_images_seq) -> List[Dict[str, Any]]:
-        """Genera las imágenes que se subirán a Zooniverse a partir de un media_map."""
-        #print(media_map)
-        self.logger.debug(("Convirtiendo timestamps"))
-        rows = self._convert_timestamps_from_media_map(media_map)
-        self.logger.debug(("Agrupando media por deployment"))
-        grouped = self._group_by_deployment(rows)
-
-        sampled_sequences = []
-
-        for group in grouped.values():
-            ordered = sorted(group, key=lambda x: x['timestamp'])
-
-            # Generamos las secuencias, una secuencia es un conjunto de imágenes tomadas
-            # en instantes de tiempo consecutivos, separados por menos de max_interval segundos.
-
-            sequences = []
-            current_seq = [ordered[0]]
-
-            for prev, curr in zip(ordered, ordered[1:]):
-                delta = (curr['timestamp'] - prev['timestamp']).total_seconds()
-                if delta <= max_interval:
-                    current_seq.append(curr)
-                else:
-                    # Cierra la secuencia actual y empieza una nueva
-                    sequences.append(current_seq)
-                    current_seq = [curr]
-
-            sequences.append(current_seq)
-            #self.logger.debug(f"Secuencias obtenidas {len(sequences)}: {self._show_sequences_as_json(sequences)}")
-            self.logger.debug(f"Secuencias obtenidas {len(sequences)}")
-            self.logger.debug(f"Muestreando secuencias...")
-
-            # Muestreamos cada scuencias
-            for seq in sequences:
-                self.logger.debug(f"Muestreando secuencias con {len(seq)} imagenes...")
-                sampled = self._sample_sequence(seq, n_images_seq)
-                self.logger.debug(f"Obtenido muestreo de {len(sampled)} imagenes...")
-                sampled_sequences.append(sampled)
-
-            self.logger.debug(f"Secuencias muestreadas {self._show_sequences_as_json(sampled_sequences)}")
-
-        return sampled_sequences
-
-    def _sample_sequence(self, rows: List[Dict], n_images_seq) -> List[Dict]:
-        """Selecciona un subconjunto de imágenes distribuidas uniformemente."""
-        if len(rows) <= n_images_seq:
-            return rows
-        step = (len(rows) - 1) / (n_images_seq - 1) if n_images_seq > 1 else 0
-        indices = [round(i * step) for i in range(n_images_seq)]
-        return [rows[i] for i in indices]
-
-    def _count_until_threshold(self, differences: List[float], max_interval) -> Tuple[int, List[float]]:
-        """Cuenta cuántas imágenes están dentro del umbral de tiempo."""
-        for i, val in enumerate(differences):
-            if val > max_interval:
-                return i, differences[i:]
-        return len(differences), []
-
-    def _convert_timestamps_from_media_map(self, media_map: Dict[str, MediaObservationEntry]) -> List[Dict]:
-        """Convierte timestamps ISO8601 a objetos datetime (in place)."""
-        rows = []
-        for mid, data in media_map.items():
-            if 'timestamp' in data and isinstance(data['timestamp'], str):
-                try:
-                    data['timestamp'] = datetime.fromisoformat(data['timestamp'])
-                except ValueError:
-                    pass  # si no se puede convertir, se deja como está
-            rows.append({**data, "mediaID": mid})
-        return rows
-
-    def _group_by_deployment(self, rows: List[Dict]) -> Dict[str, List[Dict]]:
-        """Agrupa las imágenes por deploymentID."""
-        groups = defaultdict(list)
-        for row in rows:
-            deployment = row.get('deploymentID', 'unknown')
-            groups[deployment].append(row)
-        return groups
-
-    @staticmethod
-    def _load_uploaded_files_list(path: str) -> list[str]:
-        """
-        Lee un archivo de texto que contiene rutas de archivos (uno por línea)
-        y devuelve una lista con esos paths.
-        Se usa para mantener registro de las imágenes ya subidas o con errores.
-        """
-        if not os.path.exists(path):
-            return []
-        with open(path, 'r', encoding='utf-8') as f:
-            return [line.strip() for line in f if line.strip()]

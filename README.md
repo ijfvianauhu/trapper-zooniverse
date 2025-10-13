@@ -23,6 +23,11 @@ Create a virtual environment and its dependencies:
 poetry install
 ```
 
+Now you can run all commands within this isolated environment.
+``
+poetry shell
+```
+
 ## Configuration
 
 The client relies on a configuration file that stores login credentials, runtime parameters, and upload settings.
