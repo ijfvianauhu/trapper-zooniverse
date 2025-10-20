@@ -252,8 +252,8 @@ def login(
     )
 
 @app.command("collections",
-    short_help=_("Retrieve all collections from trapper"),
-    help=_("This command allows users to fetch collections from trapper.")
+    short_help=_("Retrieve all collections from Trapper instance"),
+    help=_("This command allows users to fetch all collections from trapper instance.")
 )
 def collections_get_all(
         ctx: typer.Context
@@ -290,9 +290,8 @@ def collections_get_all(
     TyperUtils.json2Table(results[0], title="Collections", columns=["pk","name","description","owner"])
 
 @app.command("collections-upload",
-    short_help=_("Upload all media collection from Trapper to Zooniverse"),
-    help=_("Upload all media collection from Trapper to Zooniverse")
-)
+         short_help=_("Upload all media (images) from a Trapper collection to a Zooniverse subject set"),
+         help=_("Upload all media (images) from a specific Trapper collection to a designated Zooniverse subject set"))
 @use_yaml_config(section=["upload_collection"], default_value=config_manager.ensure_config_file())
 def upload_collection(
         ctx: typer.Context,
@@ -413,7 +412,10 @@ def upload_collection(
     TyperUtils.display_report2(report)
     TyperUtils.success(_(f"Report saved at: {report_file}"))
 
-@app.command("collections-upload-reports", help=_("List all upload reports"), short_help=_("List upload reports"))
+@app.command("collections-upload-reports",
+             help=_("List all reports generated after uploading Trapper collections to Zooniverse"),
+             short_help=_("List upload collection reports")
+)
 def upload_reports():
     """
     List all YAML upload reports saved in the same directory as the configuration file.
@@ -421,7 +423,10 @@ def upload_reports():
     results_dir = get_default_upload_reports_dir()
     TyperUtils.print_reports_in_directory(results_dir)
 
-@app.command("collections-upload-report", help=_("Show details of an upload report"), short_help=_("Show an upload report"))
+@app.command("collections-upload-report",
+     help=_("Show detailed information for a specific upload report of a Trapper collection to Zooniverse"),
+     short_help=_("Show an upload report")
+)
 def upload_report(
     filename: Annotated[
         str,
@@ -438,8 +443,9 @@ def upload_report(
     TyperUtils.display_report2(report, True)
 
 @app.command("subjectsets",
-    help=_("Retrieve all subset_sets from Zooniverse"),
-    short_help=_("Retrieve all subset_sets from Zooniverse"))
+    help=_("Retrieve all subject sets from a specific Zooniverse project"),
+    short_help=_("Retrieve all subject sets from Zooniverse")
+)
 def subset_sets(
         ctx: typer.Context,
         with_exports: Annotated[bool, typer.Option(help="Only show subjetsts with exports")] = False,
@@ -477,8 +483,9 @@ def subset_sets(
     ZooUtils.show_subject_sets(results[1])
 
 @app.command("subjectsets-get",
-    help=_("Retrieve one subset_set from Zooniverse"),
-    short_help=_("Retrieve one subset_set from Zooniverse"))
+    help=_("Retrieve a specific subject set from a Zooniverse project"),
+    short_help=_("Retrieve a single subject set from Zooniverse")
+)
 def subset_sets_get_by_id(
         ctx: typer.Context,
         id: Annotated[int, typer.Argument(help=_("Subject Set  ID"))] = ...,
@@ -510,8 +517,9 @@ def subset_sets_get_by_id(
         ZooUtils.show_subject_set(results[1])
 
 @app.command("subjectsets-get-by-workflow",
-    help=_("Retrieve subset sets linked to a workflow"),
-    short_help=_("Retrieve subset sets linked to a workflow"))
+     help=_("Retrieve all subject sets associated with a specific workflow in a Zooniverse project"),
+     short_help=_("Retrieve subject sets linked to a Zooniverse workflow")
+)
 def subset_sets_get_by_workflow(
         ctx: typer.Context,
         id: Annotated[int, typer.Argument(help=_("Work flow ID"))] = ...,
@@ -539,8 +547,9 @@ def subset_sets_get_by_workflow(
     ZooUtils.show_subject_sets(results[1])
 
 @app.command("subjects-get",
-    help=_("Retrieve subject"),
-    short_help=_("Retrieve subject"))
+     help=_("Retrieve a specific subject (image) from a Zooniverse project"),
+     short_help=_("Retrieve a subject")
+)
 def subjects(
         ctx: typer.Context,
         id: Annotated[int, typer.Argument(help=("Collection ID"))] = ...,
@@ -575,8 +584,9 @@ def subjects(
         TyperUtils.error(str(e))
 
 @app.command("subjects-by-subjectset",
-    help=_("Retrieve all subjects from Zooniverse"),
-    short_help=_("Retrieve all subset_sets from Zooniverse"))
+     help=_("Retrieve all subjects (images) from a specific Zooniverse subject set"),
+     short_help=_("Retrieve all subjects from a subject set")
+)
 def subjects_by_subjectset(
         ctx: typer.Context,
         subjectset_id: Annotated[int, typer.Argument(help=("Collection ID"))] = ...,
@@ -607,8 +617,8 @@ def subjects_by_subjectset(
         TyperUtils.error(str(e))
 
 @app.command("workflows",
-    short_help=_("Retrieve all workflows for a project from Zooniverse"),
-    help=_("Retrieve all workflows for a project from Zooniverse")
+    short_help=_("Retrieve all workflows from a specific Zooniverse project"),
+    help=_("Retrieve all workflows associated with a specific Zooniverse project")
 )
 def workflows_get_all(
         ctx: typer.Context,
@@ -644,8 +654,8 @@ def workflows_get_all(
     ZooUtils.show_workflows(results[0])
 
 @app.command("workflows-get",
-    short_help=_("Retrieve all workflows for a project from Zooniverse"),
-    help=_("Retrieve all workflows for a project from Zooniverse")
+    short_help=_("Retrieve information for a specific Zooniverse workflow"),
+    help=_("Retrieve detailed information about a specific workflow in a Zooniverse project")
 )
 def workflows_by_id(
         ctx: typer.Context,
@@ -690,8 +700,8 @@ def workflows_by_id(
         ZooUtils.show_workflow(workflow)
 
 @app.command("annotations-upload",
-    short_help=_("Upload all subjetset annotation from Zooniverse to Trapper Classification Project"),
-    help=_("Upload all subjetset annotation from Zooniverse to Trapper Classification Project")
+    short_help=_("Upload all annotations from a Zooniverse subject set to a Trapper classification project"),
+    help=_("Upload all annotations from a specific Zooniverse subject set into a designated Trapper classification project")
 )
 def public_annotations(
         ctx: typer.Context,
@@ -780,8 +790,8 @@ def public_annotations(
         TyperUtils.fatal(str(e))
 
 @app.command("annotations-upload-reports",
-    help=_("List all upload reports related to data transferred from Zooniverse (annotations) to Trapper."),
-    short_help=_("List upload reports from Zooniverse to Trapper.")
+    help=_("List all upload reports related to annotations transferred from Zooniverse to a Trapper classification project"),
+    short_help=_("List annotation upload reports from Zooniverse to Trapper")
 )
 def trapper_reports():
     """

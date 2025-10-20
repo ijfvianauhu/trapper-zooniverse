@@ -249,7 +249,7 @@ class TrapperZooniverseConnector:
 
         (extrator, voter) = self._get_extrator_vote(wf.id)
 
-        indices = random.sample(range(len(observations.results)), len(observations.results))
+        #indices = random.sample(range(len(observations.results)), len(observations.results))
 
         flat_results : List[TrapperObservation]= []
 
@@ -259,13 +259,13 @@ class TrapperZooniverseConnector:
                 subject_id, media_id = key.split(":")
 
                 # Fake code begins
-                n = random.randint(0, min(3, len(indices)))
-                removed = indices[:n]
-                indices = indices[n:]
-                all_media_observations = [observations.results[i] for i in removed]
+                #n = random.randint(0, min(3, len(indices)))
+                #removed = indices[:n]
+                #indices = indices[n:]
+                #all_media_observations = [observations.results[i] for i in removed]
                 ### Fake code end
 
-                #all_media_observations: List[TrapperObservation] = [observations.results[i] for o in observations.results if str(o.mediaID) == media_id]
+                all_media_observations: List[TrapperObservation] = [o for o in observations.results if str(o.mediaID) == media_id]
 
                 opinions = extrator.run(value)
 
