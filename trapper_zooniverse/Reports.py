@@ -164,7 +164,7 @@ class Report:
 @dataclass()
 class UploadCollectionReport(Report):
     def __init__(self, collection_name: str):
-        super().__init__(title='{collection_name}')
+        super().__init__(title=f'{collection_name}')
 
 
 @dataclass()

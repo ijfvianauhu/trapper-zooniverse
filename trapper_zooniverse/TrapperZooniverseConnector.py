@@ -85,6 +85,7 @@ class TrapperZooniverseConnector:
             delay_seconds_per_subject=30,
     ) -> UploadCollectionReport:
         report2 = UploadCollectionReport(f"Collection {collection} from {self.trapper.base_url}")
+        metadata = {}
 
         start_time = datetime.now().isoformat()
         self.logger.debug(f"Starting upload_collection at {start_time}")
@@ -149,8 +150,7 @@ class TrapperZooniverseConnector:
                             report2.add_error(f"{media['mediaID']}@media", "select","skipped_human")
                             continue
 
-                    extension = media['fileMediatype'].split("/")[1]
-                    name = f"{media['mediaID']}_x_{media['deploymentID']}_x_{media['fileName']}.{extension}"
+                    name = self._get_zoo_filename(media)
                     local_path = os.path.join(temp_dir, name)
 
                     self.logger.debug(
@@ -158,6 +158,8 @@ class TrapperZooniverseConnector:
 
                     try:
                         self._download_image(str(media['filePath']), local_path, attempts=5, delay_seconds=60)
+                        origin = f"{self.trapper.base_url}:media:{media['mediaID']}"
+                        metadata[name] = {"origin":origin}
                         report2.add_success(f"{media['mediaID']}@media", "download",**{"path":local_path})
                         import time
                         import random
@@ -169,8 +171,7 @@ class TrapperZooniverseConnector:
                                           str(e),
                                           **{"path":str(media['filePath'])})
 
-
-            # Subir a ZooniverseTyptempfilee
+            # Subir a Zooniverse
             file_paths = [
                 os.path.join(temp_dir, f)
                 for f in os.listdir(temp_dir)
@@ -184,6 +185,7 @@ class TrapperZooniverseConnector:
             ok, fail = self.zoo.subjects.create_bulk(
                 file_paths,
                 subjectset,
+                metadata,
                 attempts,
                 delay,
                 max_attempts_per_subject,
@@ -194,7 +196,7 @@ class TrapperZooniverseConnector:
                 import re
                 match=re.search(r"/(\d+)_.*$",success["path"])
                 media_id = match.group(1)
-                report2.add_success(f"{media_id}@media", "success",
+                report2.add_success(f"{media_id}@media", "upload",
                                     **{"subject_id": success["subject_id"], "path": success["path"]})
 
             for failure in fail:
@@ -204,6 +206,7 @@ class TrapperZooniverseConnector:
                 report2.add_error(f"{media_id}@media", "upload","failed",
                                   **{"path": failure})
 
+        report2.finish()
 
         return report2
 
@@ -347,6 +350,10 @@ class TrapperZooniverseConnector:
         return report
 
         #TODO subir usando el browser
+
+    def _get_zoo_filename(self, media):
+        extension = media['fileMediatype'].split("/")[1]
+        return f"{media['mediaID']}_x_{media['deploymentID']}_x_{media['fileName']}.{extension}"
 
     def _get_extrator_vote(self, workflow_id) -> Tuple[AnnotationsExtractor, AnnotationsVoter]:
         import importlib

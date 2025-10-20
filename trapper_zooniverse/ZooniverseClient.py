@@ -234,7 +234,7 @@ class SubjectsComponent(ZooniverseClientComponent):
         # Return the subjects as a list
         return list(subject_set.subjects)
 
-    def create(self, path: str, subject_set, attempts=5, delay_seconds=60):
+    def create(self, path: str, subject_set, metadata=None, attempts=5, delay_seconds=60):
         """
         Try to upload a subject to Zooniverse with exponential backoff retries.
 
@@ -259,7 +259,10 @@ class SubjectsComponent(ZooniverseClientComponent):
                 self.client.logger.debug(f"[Attempt {attempt}/{attempts}] Uploading... {path}")
                 subject = Subject()
                 subject.links.project = self.client.project_id
-                subject.metadata['Filename'] = path
+                subject.metadata['Filename'] = os.path.basename(path)
+                if metadata :
+                    for k, v in metadata.items():
+                        subject.metadata[k] = v
                 subject.add_location(path)
                 subject.save()
                 self.client.logger.debug(f"✅ Successfully uploaded {path}")
@@ -273,7 +276,7 @@ class SubjectsComponent(ZooniverseClientComponent):
 
         return None
 
-    def create_bulk(self, file_paths, subject_set:SubjectSet, attempts=5, delay=15, max_attempts_per_subject=5, delay_seconds_per_subject=30):
+    def create_bulk(self, file_paths, subject_set:SubjectSet, metadata=None, attempts=5, delay=15, max_attempts_per_subject=5, delay_seconds_per_subject=30):
         """
         Upload multiple subjects to a Zooniverse SubjectSet with batch-level retries.
         If any uploads fail, retries only those in subsequent rounds, with increasing delay.
@@ -312,6 +315,7 @@ class SubjectsComponent(ZooniverseClientComponent):
 
                 subject = self.create(path,
                                       subject_set,
+                                      metadata[os.path.basename(path)],
                                       max_attempts_per_subject,
                                       delay_seconds_per_subject
                 )
