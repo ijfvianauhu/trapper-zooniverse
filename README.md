@@ -3,6 +3,8 @@
 ![Python](https://img.shields.io/badge/python-3.11-blue.svg)
 ![License](https://img.shields.io/badge/license-GPLv3-blue.svg)
 ![WildINTEL](https://img.shields.io/badge/WildINTEL-v1.0-blue)
+![Trapper-client](https://img.shields.io/badge/trapper--client-v1.0-blue)
+![Trapper-browser](https://img.shields.io/badge/trapper--browser-v1.0-blue)
 
 <hr>
 
@@ -17,6 +19,9 @@
 ## 📋 Requirements
 
 - Python 3.11 or higher
+- panoptes-client
+- [Trapper client](https://github.com/ijfvianauhu/trapper-client)
+- [Trapper Browser](https://github.com/ijfvianauhu/trapper-browser)
 - Docker (optional, for running in a container)
 - Access to a Trapper server instance
 - Access to Zooniverse server 
