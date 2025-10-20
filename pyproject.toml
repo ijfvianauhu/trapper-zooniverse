@@ -9,7 +9,8 @@ packages = [{ include = "trapper_zooniverse" }]
 
 [tool.poetry.scripts]
 trapper-zooniverse = "trapper_zooniverse.ui.typer.main:app"
-build-docs = "utils.docs:build_docs"
+#build-docs = "utils.docs:build_docs"
+build-docs = "utils.sphinx:build_docs"
 extract-pot = "utils.i18n:extract_translations"
 update-po = "utils.i18n:init_translation"
 compile-mo = "utils.i18n:compile_translations"
@@ -30,6 +31,9 @@ pdoc = "^15.0.4"
 babel = "^2.17.0"
 python-gettext = "^5.0"
 polib = "^1.2.0"
+sphinx = "^8.2.3"
+sphinx-autodoc-typehints = "^3.5.2"
+recommonmark = "^0.7.1"
 
 [build-system]
 requires = ["poetry-core"]

@@ -283,24 +283,27 @@ class SubjectsComponent(ZooniverseClientComponent):
 
         Parameters
         ----------
-        file_paths : list[str]from datetime import datetime
-
+        file_paths : list[str]
             Paths to the image files to upload.
         subject_set : SubjectSet
             The Zooniverse SubjectSet to which subjects will be added.
-        max_attempts : int, optional
+        metadata : dict, optional
+            Optional metadata to attach to each subject.
+        attempts : int, optional
             Maximum number of retry rounds for failed uploads.
-        initial_delay_seconds : int, optional
+        delay : int, optional
             Initial wait time between retry rounds (in seconds).
-        delay_increment_seconds : int, optional
-            Additional seconds added to the delay after each failed round.
+        max_attempts_per_subject : int, optional
+            Maximum number of upload attempts per subject.
+        delay_seconds_per_subject : int, optional
+            Delay between uploads of individual subjects (in seconds).
 
         Returns
         -------
         dict
             {
                 "subjects": List[Subject],  # Successfully uploaded subjects
-                "failed": List[str]         # Files that failed after all attempts
+                "failed": List[str]          # Files that failed after all attempts
             }
         """
         remaining_files = list(file_paths)
