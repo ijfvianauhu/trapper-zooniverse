@@ -21,6 +21,7 @@ cd trapper-zooniverse
 Create a virtual environment and its dependencies:
 ```python
 poetry install
+poetry run compile-mo
 ```
 
 Now you can run all commands within this isolated environment.

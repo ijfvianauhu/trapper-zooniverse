@@ -8,7 +8,7 @@ packages = [{ include = "trapper_zooniverse" }]
 
 
 [tool.poetry.scripts]
-trapper-zooniverse = "trapper_zooniverse.main:app"
+trapper-zooniverse = "trapper_zooniverse.ui.typer.main:app"
 build-docs = "utils.docs:build_docs"
 extract-pot = "utils.i18n:extract_translations"
 update-po = "utils.i18n:init_translation"
