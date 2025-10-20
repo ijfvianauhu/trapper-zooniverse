@@ -1,9 +1,33 @@
-# trapper_zooniverse
+# <img src="img/wildIntel_logo.webp" alt="Trapper Tools Logo" height="60">  Trapper Zooniverse
+
+![Python](https://img.shields.io/badge/python-3.11-blue.svg)
+![License](https://img.shields.io/badge/license-GPLv3-blue.svg)
+![WildINTEL](https://img.shields.io/badge/WildINTEL-v1.0-blue)
+
+<hr>
+
+## CLI application for uploading Trapper collections to Zooniverse and publishing Zooniverse annotations back to Trapper
+
+
+## 🚀 Features
+
+- **Collections Upload**: Upload Trapper collections to Zooniverse subject sets
+- **Annotations Upload**: Upload Zooniverse subject sets classification export to Tapper classification projects. 
+
+## 📋 Requirements
+
+- Python 3.11 or higher
+- Docker (optional, for running in a container)
+- Access to a Trapper server instance
+- Access to Zooniverse server 
+
+## 🫎 Overview
+
 A bridge for integrating [Trapper](https://gitlab.com/trapper-project/trapper) with [Zooniverse](https://www.zooniverse.org) projects 
 
-Trapper-Zooniverse is a Python client that allows you to upload image collections from Trapper to Zooniverse subject sets 
-and download classification from Zooniverse to Tapper classification projects.
-
+Trapper-Zooniverse is a Python client that allows you to upload image collections from
+[Trapper](https://gitlab.com/trapper-project/trapper) to [Zooniverse](https://www.zooniverse.org) subject sets 
+and download classification from [Zooniverse](https://www.zooniverse.org) to [Trapper](https://gitlab.com/trapper-project/trapper) classification projects.
 
 ## 💻 Installation
 
