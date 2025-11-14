@@ -1,40 +1,55 @@
-[tool.poetry]
+[project]
 name = "trapper-zooniverse"
 version = "0.1.0"
 description = "A bridge for integrating Trapper with Zooniverse projects"
-authors = ["ijfviana <ijfviana@gmail.com>"]
 readme = "README.md"
-packages = [{ include = "trapper_zooniverse" }]
+requires-python = ">=3.12"
+
+dependencies = [
+    "typer-config >=1.4.2",
+    "typer>=0.20.0",
+    "rich>=14.2.0",
+    "trapper-client",
+    "panoptes-client >= 1.7.1",
+    "python-dotenv >= 1.1.1",
+    "pyyaml >=6.0.3",
+    "pyjson >=1.4.1",
+    "pydantic>=2.12.0",
+    "dynaconf>=3.2.12",
 
 
-[tool.poetry.scripts]
+]
+
+[dependency-groups]
+dev = [
+    "babel>=2.17.0",
+    "pyright>=1.1.407",
+    "pytest>=8.4.2",
+    "ruff>=0.14.3",
+    "sphinx>=8.2.3",
+    "sphinx-autodoc-typehints>=3.5.2",
+    "sphinx-rtd-theme>=3.0.2",
+]
+
+
+[project.scripts]
 trapper-zooniverse = "trapper_zooniverse.ui.typer.main:app"
-#build-docs = "utils.docs:build_docs"
-build-docs = "utils.sphinx:build_docs"
-extract-pot = "utils.i18n:extract_translations"
-update-po = "utils.i18n:init_translation"
-compile-mo = "utils.i18n:compile_translations"
-
-[tool.poetry.dependencies]
-python = ">=3.12,<3.14"
-pytest = "^8.4.2"
-typer-config = "^1.4.2"
-panoptes-client = "^1.7.1"
-python-dotenv = "^1.1.1"
-pyyaml = "^6.0.3"
-trapper-client = {git = "https://github.com/ijfvianauhu/trapper-client.git"}
-pyjson = "^1.4.1"
-pydantic = "^2.12.0"
-
-[tool.poetry.group.dev.dependencies]
-pdoc = "^15.0.4"
-babel = "^2.17.0"
-python-gettext = "^5.0"
-polib = "^1.2.0"
-sphinx = "^8.2.3"
-sphinx-autodoc-typehints = "^3.5.2"
-recommonmark = "^0.7.1"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["uv_build>=0.9.5,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+# Set the maximum line length to 79.
+line-length = 120
+
+[tool.ruff.lint]
+# Add the `line-too-long` rule to the enforced rule set.
+extend-select = ["E501"]
+
+[tool.uv.sources]
+trapper-client = { git = "https://github.com/ijfvianauhu/trapper-client.git", rev = "main" }
+

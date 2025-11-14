@@ -2,24 +2,29 @@ from collections import defaultdict
 from datetime import datetime, time, timezone
 import random
 from pathlib import Path
-from typing import List, Dict, Tuple, Any, Optional
+from typing import List, Dict, Tuple, Any, Optional, Callable
 import logging, os
 import tempfile
 
+from panoptes_client import Project, SubjectSet
+from panoptes_client.panoptes import Panoptes
 from pydantic import BaseModel, validator, HttpUrl
 from trapper_client import Schemas
 from trapper_client.TrapperClient import TrapperClient
-from trapper_client.Schemas import TrapperMediaList, TrapperObservationList, TrapperObservation, Pagination
+from trapper_client.Schemas import TrapperMediaList, TrapperObservationList, Pagination, \
+    TrapperObservationResultsTrapper, TrapperClassificationResultsList
 
 from trapper_zooniverse.AnnotationsVoter import AnnotationsVoter
 from trapper_zooniverse.AnnotationsExtractor import AnnotationsExtractor
-from trapper_zooniverse.Reports import UploadCollectionReport
+from trapper_zooniverse.reports import Report
 from trapper_zooniverse.Schemas import UploadReport, SubjectSetResults, WorkflowData, UploadAnnotationsReport, \
     Zoo2TrapperObservation, UploadMediaReport
 
 import urllib
 
 from trapper_zooniverse.ZooniverseClient import ZooniverseClient
+from trapper_zooniverse.ui.typer.TyperUtils import TyperUtils
+
 
 class MediaObservationEntry(BaseModel):
     filePath: HttpUrl
@@ -83,27 +88,41 @@ class TrapperZooniverseConnector:
             delay=15,
             max_attempts_per_subject=5,
             delay_seconds_per_subject=30,
-    ) -> UploadCollectionReport:
-        report2 = UploadCollectionReport(f"Collection {collection} from {self.trapper.base_url}")
+            progress_callback: Optional[Callable[[str, int], None]] = None  # <--- callback
+    ) -> Report:
+        report2 = Report(f"Collection {collection} from {self.trapper.base_url}", type="UploadMediaReport" )
         metadata = {}
 
         start_time = datetime.now().isoformat()
         self.logger.debug(f"Starting upload_collection at {start_time}")
 
-        media:TrapperMediaList=self.trapper.media.get_by_classification_project_and_collection(classification_project, collection)
+        print(f"Getting media for {classification_project} and collection {collection}...")
+        media:TrapperMediaList=self.trapper.media.get_by_collection(classification_project, collection)
+
         self.logger.debug(
             f"Obtained {len(media.results)} media from classification project {classification_project} and collection {collection}")
 
-        observations:TrapperObservationList=self.trapper.observations.get_by_classification_project_and_collection(classification_project, collection)
+        print(f"Getting observations from classification project  {classification_project} and collection {collection}")
+        observations:TrapperClassificationResultsList=(self.trapper.observations.results.get_by_collection(classification_project, collection))
         self.logger.debug(
             f"Obtained {len(observations.results)} observations from classification project  {classification_project} and collection {collection}")
 
+        if progress_callback:
+            progress_callback("get_observations", len(observations.results))
+
+        print(f"Filtering classified observations...")
+
         filtered_observations = [
             obs for obs in observations.results
-            if obs.observationType != "unclassified" and (obs.classifiedBy is not None and obs.classificationTimestamp is not None)
+            if obs.observationType != "unclassified"
+               and obs.classifiedBy is not None
+               and obs.classificationTimestamp is not None
         ]
 
-        observations = TrapperObservationList(
+        if len(filtered_observations) == 0:
+            self.logger.warning(f"No observations found after filtering for collection {collection} and classification project {classification_project}.")
+
+        observations = TrapperClassificationResultsList(
             **{
                 "results": filtered_observations,
                 "pagination": Pagination(
@@ -118,6 +137,8 @@ class TrapperZooniverseConnector:
         self.logger.debug(
             f"Obtained {len(observations.results)} observations after filtering from classification project  {classification_project} and collection {collection}")
 
+        print(f"Geering utl for medias classified...")
+
         media_map=self._merge_media_and_observations(media,observations)
 
         self.logger.debug(
@@ -127,7 +148,11 @@ class TrapperZooniverseConnector:
             self.logger.debug(f"No valid observations found for collection {collection} and classification project {classification_project}.")
 
         self.logger.debug("Preparando las secuencias")
+        print(f"PReparing secuencias..")
+
         sequences = self._generate_zoo_images_from_media_map(media_map, max_interval, n_images_seq)
+
+        print(f"Downloading images..")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             for idx, seq in enumerate(sequences):
@@ -170,15 +195,15 @@ class TrapperZooniverseConnector:
                                           "download",
                                           str(e),
                                           **{"path":str(media['filePath'])})
-
+                    finally:
+                        if progress_callback:
+                            progress_callback("download", 1)  # incrementa 1 unidad
             # Subir a Zooniverse
             file_paths = [
                 os.path.join(temp_dir, f)
                 for f in os.listdir(temp_dir)
                 if os.path.isfile(os.path.join(temp_dir, f))
             ]
-
-            self.zoo.connect()
             self.logger.debug(f"Creando SubjectSet {subjectset_name} en Zooniverse")
             subjectset = self.zoo.subjectsets.create(subjectset_name)
 
@@ -251,7 +276,7 @@ class TrapperZooniverseConnector:
 
         #indices = random.sample(range(len(observations.results)), len(observations.results))
 
-        flat_results : List[TrapperObservation]= []
+        flat_results : List[TrapperObservationResultsTrapper]= []
 
         for key, value in annotations.data.items():
             try:
@@ -265,7 +290,7 @@ class TrapperZooniverseConnector:
                 #all_media_observations = [observations.results[i] for i in removed]
                 ### Fake code end
 
-                all_media_observations: List[TrapperObservation] = [o for o in observations.results if str(o.mediaID) == media_id]
+                all_media_observations: List[TrapperObservationResultsTrapper] = [o for o in observations.results if str(o.mediaID) == media_id]
 
                 opinions = extrator.run(value)
 
@@ -287,7 +312,7 @@ class TrapperZooniverseConnector:
 
                     for ob in all_media_observations:
                         for d in decision:
-                            new_obs: TrapperObservation = ob.copy(update={
+                            new_obs: TrapperObservationResultsTrapper = ob.copy(update={
                                 **d.model_dump(),
                                 "bboxes": None,
                                 "classificationTimestamp": datetime.now(timezone.utc),
@@ -530,7 +555,7 @@ class TrapperZooniverseConnector:
             groups[deployment].append(row)
         return groups
 
-    def _trapper_observations_to_csv(self, observations: List[TrapperObservation], path: Path):
+    def _trapper_observations_to_csv(self, observations: List[TrapperObservationResultsTrapper], path: Path):
         import csv
 
         def format_datetime(value):

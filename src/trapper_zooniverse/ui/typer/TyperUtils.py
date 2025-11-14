@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path, PosixPath
 from typing import Union, List, Optional, Dict, Any, Callable, Tuple
 
@@ -29,6 +30,7 @@ from trapper_zooniverse.ui.typer.ConfigManager import AppConfig
 class TyperUtils:
     console = Console()
     logger = logging.getLogger(__name__)
+    home = os.path.expanduser("~")
 
     @staticmethod
     def info(message: str):
@@ -182,7 +184,7 @@ class TyperUtils:
         for i, item in enumerate(items, start=1):
             row = [str(i)]
             if show_id:
-                row.append(str(item.id))
+                row.append(str(item.pk))
             if show_name:
                 row.append(item.name)
             table.add_row(*row)
@@ -249,6 +251,10 @@ class TyperUtils:
             raise ValueError(f"ZIP file '{Path}' is not a zip file or it is corrupted.")
         except FileNotFoundError:
             raise ValueError(f"ZIP file '{Path}' not found.")
+
+    @staticmethod
+    def get_default_report_dir():
+        return Path(TyperUtils.home) / ("reports")
 
     @staticmethod
     def print_reports_in_directory(results_dir: Path):

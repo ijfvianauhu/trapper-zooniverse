@@ -1,9 +1,7 @@
 import os
 import time
 import logging
-from collections import defaultdict
 from datetime import datetime
-from itertools import count
 from typing import List, Tuple, Optional, Union, Dict
 import json
 import panoptes_client as pc
@@ -13,11 +11,22 @@ from trapper_zooniverse.Schemas import SubjectSetResults
 
 from trapper_zooniverse.i18n import setup_i18n, _
 
+import logging
+import panoptes_client as pc
+from panoptes_client import Project, SubjectSet, Workflow, User, ProjectRole
+
+
 class ZooniverseClientComponent:
-    def __init__(self, client = None):
+    """Clase base para componentes del cliente de Zooniverse (Workflows, Subjects, etc.)."""
+
+    def __init__(self, client=None):
         self.client = client
 
-
+    def _ensure_connection(self):
+        """Garantiza que el cliente esté conectado antes de ejecutar operaciones."""
+        if self.client and not getattr(self.client, "_connected", False):
+            self.client.logger.debug("🔄 Reconnecting automatically before operation...")
+            self.client.connect()
 #
 # Workflow
 #
@@ -26,15 +35,17 @@ class ZooniverseClientComponent:
 class WorkflowsComponent(ZooniverseClientComponent):
 
     def get_all(self) -> List[Workflow]:
+        self.client._ensure_connection()
         project = Project.find(self.client.project_id)
         workflows = Workflow.where(project_id=project.id)
         return list(workflows)
 
     def get_by_id(self, id:int) -> Workflow:
-        self.client.connect()
+        self.client._ensure_connection()
         return Workflow.find(id)
 
     def get_by_subjectset(self, subjectset_id:int) -> List[Workflow]:
+        self.client._ensure_connection()
         subject_set = SubjectSet.find(subjectset_id)
         workflow_ids = subject_set.raw["links"].get("workflows", [])
         workflows = [Workflow.find(wid) for wid in workflow_ids]
@@ -45,6 +56,11 @@ class WorkflowsComponent(ZooniverseClientComponent):
 #
 
 class SubjectSetsComponent(ZooniverseClientComponent):
+
+    def __init__(self, client: "ZooniverseClient"):
+        self.client = client
+        self.logger = client.logger
+
 
     def get_all(self) -> List[SubjectSet]:
         """
@@ -67,6 +83,7 @@ class SubjectSetsComponent(ZooniverseClientComponent):
         This method queries the Zooniverse API using the authenticated client
         and returns all subject sets linked to the project specified during initialization.
         """
+        self.client._ensure_connection()
         project = Project.find(self.client.project_id)
         subject_sets = SubjectSet.where(project_id=project.id)
         return list(subject_sets)
@@ -90,6 +107,7 @@ class SubjectSetsComponent(ZooniverseClientComponent):
         ValueError
             Si no se encuentra un SubjectSet con el ID dado.
         """
+        self.client._ensure_connection()
         subject_set = SubjectSet.find(subject_set_id)
         if not subject_set:
             raise ValueError(f"SubjectSet with ID {subject_set_id} not found.")
@@ -122,6 +140,7 @@ class SubjectSetsComponent(ZooniverseClientComponent):
         the given workflow. Each workflow can have one or more associated subject sets.
         """
 
+        self.client._ensure_connection()
         project = Project.find(self.client.project_id)
         subject_sets = SubjectSet.where(project_id=project.id)
 
@@ -146,7 +165,7 @@ class SubjectSetsComponent(ZooniverseClientComponent):
         bool
             True si existe, False en caso contrario.
         """
-
+        self.client._ensure_connection()
         subject_sets = self.get_all()
         return any(ss.display_name == name for ss in subject_sets)
 
@@ -160,6 +179,7 @@ class SubjectSetsComponent(ZooniverseClientComponent):
             pc.SubjectSet: El SubjectSet existente o recién creado.
         """
 
+        self.client._ensure_connection()
         existing_sets = [ss for ss in self.get_all() if ss.display_name == name]
 
         if existing_sets:
@@ -189,7 +209,7 @@ class SubjectSetsComponent(ZooniverseClientComponent):
         bool
             True si existe, False en caso contrario.
         """
-
+        self.client._ensure_connection()
         subject_sets = self.get_all()
         selected = []
         for ss in subject_sets:
@@ -208,6 +228,7 @@ class SubjectSetsComponent(ZooniverseClientComponent):
 class SubjectsComponent(ZooniverseClientComponent):
 
     def get_by_id(self, id) -> List:
+        self.client._ensure_connection()
         return Subject.find(id)
 
     def get_by_subjectset(self, subject_set_id) -> List:
@@ -254,6 +275,8 @@ class SubjectsComponent(ZooniverseClientComponent):
         Subject | None
             The uploaded Subject if successful, otherwise None.
         """
+        self.client._ensure_connection()
+
         for attempt in range(1, attempts + 1):
             try:
                 self.client.logger.debug(f"[Attempt {attempt}/{attempts}] Uploading... {path}")
@@ -306,6 +329,7 @@ class SubjectsComponent(ZooniverseClientComponent):
                 "failed": List[str]          # Files that failed after all attempts
             }
         """
+        self.client._ensure_connection()
         remaining_files = list(file_paths)
         all_subjects = []
         failed_files = []
@@ -443,6 +467,8 @@ class AnnotationsComponent(ZooniverseClientComponent):
         Dict[str, Optional[str]]
             Diccionario con las fechas ISO de los últimos exports o '—' si no existen.
         """
+        self.client._ensure_connection()
+
         project = Project.find(self.client.project_id)
         base_url = "https://panoptes.zooniverse.org/api/projects"
         print(project.get_export(export_type="classifications", wait=False))
@@ -493,6 +519,8 @@ class AnnotationsComponent(ZooniverseClientComponent):
         List[Tuple[int, str, str]]
             Lista de tuplas con (workflow_id, workflow_name, last_export_date o '-')
         """
+        self.client._ensure_connection()
+
         project = Project.find(self.client.project_id)
         workflows = Workflow.where(project_id=project.id)
         results = []
@@ -531,6 +559,8 @@ class AnnotationsComponent(ZooniverseClientComponent):
         return results
 
     def get_all(self) ->List[Tuple[int, Optional[str]]]:
+        self.client._ensure_connection()
+
         project = Project.find(self.client.project_id)
         subject_sets = SubjectSet.where(project_id=project.id)
         anotations = []
@@ -549,6 +579,7 @@ class AnnotationsComponent(ZooniverseClientComponent):
         return anotations
 
     def get_by_workflow(self, workflow_id: int, generate: bool=False) -> List[dict]:
+        self.client._ensure_connection()
 
         workflow = Workflow.find(workflow_id)
 
@@ -581,6 +612,7 @@ class AnnotationsComponent(ZooniverseClientComponent):
         :param votes: If True, calculate the most , wait_timeout=600common annotation per subject
         :return: SubjectSetResults
         """
+        self.client._ensure_connection()
 
         def fix_encoding(s):
             if isinstance(s, str):
@@ -720,6 +752,8 @@ class AnnotationsComponent(ZooniverseClientComponent):
                 "message": str
             }
         """
+        self.client._ensure_connection()
+
         if isinstance(obj, Project):
             object_type = "Project"
         elif isinstance(obj, Workflow):
@@ -790,38 +824,57 @@ class AnnotationsComponent(ZooniverseClientComponent):
             "message": message if url else f"{message} (still processing)"
         }
 
-#
-# ZooniverseClient
-#
 class ZooniverseClient:
-    """
-    Clase para subir imágenes a Zooniverse y obtener resultados de un SubjectSet.
-    """
-
-    def __init__(self, project_id:str, username: str , password: str):
-        """
-        Initializes a new instance of the class with project credentials and identifier.
-
-        Parameters
-        ----------
-        project_id : str
-            Unique identifier of the project associated with this instance.
-        username : str
-            Username used for authentication.
-        password : str
-            Password associated with the given username.
-        """
+    def __init__(self, project_id: str, username: str, password: str):
         self.project_id = project_id
         self.username = username
         self.password = password
 
-        self.date_format = "%Y:%m:%d %H:%M:%S"
+        if not project_id:
+            raise ValueError("project_id must be provided and cannot be empty.")
+        if not username:
+            raise ValueError("username must be provided and cannot be empty.")
+        if not password:
+            raise ValueError("password must be provided and cannot be empty.")
+
+        self._connected = False
+
         self.logger = logging.getLogger(__name__)
 
-        self.subjectsets: SubjectSetsComponent = SubjectSetsComponent(self)
-        self.subjects: SubjectsComponent = SubjectsComponent(self)
-        self.annotations:AnnotationsComponent = AnnotationsComponent(self)
-        self.workflows: WorkflowsComponent = WorkflowsComponent(self)
+        # Componentes
+        self.subjectsets = SubjectSetsComponent(self)
+        self.subjects = SubjectsComponent(self)
+        self.annotations = AnnotationsComponent(self)
+        self.workflows = WorkflowsComponent(self)
+
+    def connect(self):
+        if self._connected:
+            return
+
+        self.logger.debug(f"Connecting to Zooniverse... {self.username}")
+        Panoptes.connect(username=self.username, password=self.password)
+        self._connected = True
+        self.logger.debug("Connected successfully.")
+
+    def _ensure_connection(self):
+        if not self._connected:
+            logging.info("Nos volvemos a conectar automáticamente antes de la operación...")
+            self.connect()
+
+
+    def disconnect(self):
+        """Desconecta del servicio Panoptes limpiando la instancia interna."""
+        if self._connected:
+            self.logger.info("Disconnecting from Zooniverse Panoptes API...")
+            try:
+                # Limpiar instancia singleton de Panoptes
+                if hasattr(Panoptes, "_instance"):
+                    Panoptes._instance = None
+
+                self._connected = False
+                self.logger.debug("📴 Disconnected from Zooniverse.")
+            except Exception as e:
+                self.logger.error(f"Error during disconnect: {e}")
 
     @classmethod
     def from_environment(cls, temp_folder: str = "temp_images") -> "ZooniverseClient":
@@ -858,10 +911,6 @@ class ZooniverseClient:
             )
         return cls(project_id, username, password)
 
-    def connect(self):
-        """Conecta a Zooniverse usando las credenciales proporcionadas."""
-        pc.Panoptes.connect(username=self.username, password=self.password)
-
     def _get_current_user_role(self, project_id: int) -> list[str]:
         """
         Devuelve una lista con los roles del usuario autenticado en un proyecto.
@@ -873,7 +922,6 @@ class ZooniverseClient:
 
         roles = []
 
-        # Buscar todos los roles del proyecto
         for pr in ProjectRole.where(project_id=project_id):
             links = pr.raw.get("links", {})
 
@@ -886,4 +934,3 @@ class ZooniverseClient:
                     roles.append(role_type)
 
         return roles
-

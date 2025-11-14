@@ -1,0 +1,46 @@
+[LOGGER]
+loglevel = 1
+filename = ""
+
+[TRAPPER]
+
+trapper_username= "trapper_client@uhu.es"
+trapper_password= "pass"
+trapper_url= "https://wildintel-trap.uhu.es/"
+trapper_token= ""
+
+[ZOONIVERSE]
+
+zooniverse_username= ""
+zooniverse_password= ""
+zooniverse_project_id= ""
+
+[ZOONIVERSE_CONNECTOR]
+upload_collection_n_images_seq=5
+upload_collection_max_interval=120
+upload_collection_attempts=5
+upload_collection_delay=15
+upload_collection_max_attempts_per_subject=5
+upload_collection_delay_seconds_per_subject= 30
+output_dir=
+
+[GENERAL]
+host = "https://wildintel-trap.uhu.es"
+login = "username@uhu.es"
+password = "mi_password"
+project_id = 999
+verify_ssl = true
+ffmpeg = "ffmpeg"
+exiftool = "exiftool"
+data_dir = ""
+
+[WILDINTEL]
+rp_name = "WildINTEL"
+coverage = "Doñana National Park"
+publisher = "University of Huelva"
+owner = "University of Huelva"
+tolerance_hours = 1
+resize_img = false
+resize_img_size = [800, 600]
+overwrite = false
+output_dir = ""
