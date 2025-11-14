@@ -2,6 +2,7 @@ import os
 import time
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import List, Tuple, Optional, Union, Dict
 import json
 import panoptes_client as pc
@@ -192,8 +193,34 @@ class SubjectSetsComponent(ZooniverseClientComponent):
 
         return subject_set
 
-    def with_exports(self) -> List:
-        return self.with_results()
+    def delete(self, subject_set_id: int) -> bool:
+        """
+        Elimina un SubjectSet por su ID.
+
+        Args:
+            subject_set_id (int): ID del SubjectSet a eliminar.
+
+        Returns:
+            bool: True si se eliminó correctamente, False si no se pudo eliminar.
+
+        Raises:
+            ValueError: Si no existe un SubjectSet con el ID dado.
+        """
+        self.client._ensure_connection()
+
+        try:
+            subject_set = SubjectSet.find(subject_set_id)
+            if not subject_set:
+                raise ValueError(f"SubjectSet con ID {subject_set_id} no encontrado.")
+
+            subject_set.delete()
+            self.client.logger.debug(f"SubjectSet {subject_set_id} eliminado correctamente.")
+            return True
+
+        except Exception as e:
+            self.client.logger.error(f"Error eliminando SubjectSet {subject_set_id}: {e}")
+            return False
+
 
     def with_results(self) -> List:
         """
@@ -221,6 +248,10 @@ class SubjectSetsComponent(ZooniverseClientComponent):
                 pass
 
         return selected
+
+    def with_exports(self) -> List:
+        return self.with_results()
+
 #
 # SubjectsComponent
 #
@@ -364,6 +395,123 @@ class SubjectsComponent(ZooniverseClientComponent):
                 failed_files.extend(current_failed)
 
         return (all_subjects, failed_files)
+
+    def download(self, subject_id: int, save_path: str = None) -> str:
+        """
+        Descarga la imagen principal de un Subject de Zooniverse.
+
+        Args:
+            subject_id (int): ID del Subject a descargar.
+            save_path (str, optional): Ruta completa donde guardar la imagen.
+                                       Si no se proporciona, se guarda en el directorio actual con el nombre original.
+
+        Returns:
+            str: Ruta local donde se guardó la imagen.
+
+        Raises:
+            ValueError: Si no se encuentra el Subject o no tiene imagen.
+            Exception: Si ocurre un error durante la descarga.
+        """
+        self.client._ensure_connection()
+
+        try:
+            subject = Subject.find(subject_id)
+            if not subject:
+                raise ValueError(f"Subject con ID {subject_id} no encontrado.")
+
+            # Obtener la primera ubicación de la imagen
+            locations = subject.locations
+            if not locations or not isinstance(locations, list):
+                raise ValueError(f"Subject {subject_id} no tiene imágenes asociadas.")
+
+            image_url = locations[0].get("image/png") or locations[0].get("image/jpg") or locations[0].get("image/jpeg")
+            if not image_url:
+                raise ValueError(f"Subject {subject_id} no tiene URL válida para la imagen.")
+
+            # Obtener nombre del archivo desde los metadatos
+            metadata = subject.metadata or {}
+            name_candidates = ["Filename", "filename", "file_name", "name", "display_name"]
+            original_filename = None
+            for k in name_candidates:
+                if k in metadata:
+                    original_filename = str(metadata[k])
+                    break
+            if not original_filename:
+                # fallback a nombre de URL
+                original_filename = os.path.basename(image_url)
+
+            if save_path is None:
+                filename = f"{subject_id}_{original_filename}"
+                save_path = os.path.join(os.getcwd(), filename)
+            elif os.path.isdir(save_path):
+                # Si save_path es un directorio, construir el filename dentro de él
+                filename = f"{subject_id}_{original_filename}"
+                save_path = os.path.join(save_path, filename)
+
+            # Descargar la imagen
+            response = requests.get(image_url, stream=True)
+            response.raise_for_status()  # Lanza error si status != 200
+
+            with open(save_path, "wb") as f:
+                for chunk in response.iter_content(1024):
+                    f.write(chunk)
+
+            self.client.logger.debug(f"Imagen del Subject {subject_id} descargada en {save_path}")
+            return save_path
+
+        except Exception as e:
+            self.client.logger.error(f"Error descargando la imagen del Subject {subject_id}: {e}")
+            raise
+
+    from pathlib import Path
+    import logging
+
+    def download_bulk(self, subject_set_id: int, output_folder: Path, callback: callable = None
+) -> list[str]:
+        """
+        Descarga todas las imágenes de un SubjectSet a un directorio local usando el método `download`.
+
+        Args:
+            subject_set_id (int): ID del SubjectSet.
+            output_folder (Path): Carpeta donde se guardarán las imágenes.
+            callback (callable, optional): Función que se llama antes y después de cada descarga.
+            Debe aceptar dos parámetros: subject_id (int) y status (str), donde status es 'start' o 'end'.
+            También puede recibir el path de la imagen descargada en 'end'.
+        Returns:
+            list[str]: Lista con las rutas locales de las imágenes descargadas.
+
+        Raises:
+            ValueError: Si no se encuentra el SubjectSet o no tiene subjects.
+        """
+        self.client._ensure_connection()
+
+        # Crear carpeta de salida si no existe
+        output_folder.mkdir(parents=True, exist_ok=True)
+
+        subject_set = SubjectSet.find(subject_set_id)
+        if not subject_set:
+            raise ValueError(f"SubjectSet con ID {subject_set_id} no encontrado.")
+
+        subjects = list(subject_set.subjects)
+        if not subjects:
+            logging.warning(f"SubjectSet {subject_set_id} no contiene subjects.")
+            return []
+
+        downloaded_files = []
+
+        for subj in subjects:
+            try:
+                if callback:
+                    callback(subj.id, 'start', None)  # Antes de empezar
+
+                path = self.download(subj.id, save_path=str(output_folder))
+                downloaded_files.append(path)
+                if callback:
+                    callback(subj.id, 'end', path)  # Al terminar
+            except Exception as e:
+                logging.error(f"Error descargando subject {subj.id}: {e}")
+
+        return downloaded_files
 
 
 # AnnotationsComponent
