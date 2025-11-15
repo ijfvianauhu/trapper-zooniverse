@@ -23,24 +23,3 @@ upload_collection_delay=15
 upload_collection_max_attempts_per_subject=5
 upload_collection_delay_seconds_per_subject= 30
 output_dir=
-
-[GENERAL]
-host = "https://wildintel-trap.uhu.es"
-login = "username@uhu.es"
-password = "mi_password"
-project_id = 999
-verify_ssl = true
-ffmpeg = "ffmpeg"
-exiftool = "exiftool"
-data_dir = ""
-
-[WILDINTEL]
-rp_name = "WildINTEL"
-coverage = "Doñana National Park"
-publisher = "University of Huelva"
-owner = "University of Huelva"
-tolerance_hours = 1
-resize_img = false
-resize_img_size = [800, 600]
-overwrite = false
-output_dir = ""

@@ -230,6 +230,7 @@ def common_setup(
     setup_logging(APP_NAME, verbosity, log_file)
 
     TyperUtils.home = Path(typer.get_app_dir(APP_NAME))
+    TyperUtils.logger = logger
 
     ctx.obj = {
         "setting_manager": SettingsManager(settings_dir=Path(settings_dir)),

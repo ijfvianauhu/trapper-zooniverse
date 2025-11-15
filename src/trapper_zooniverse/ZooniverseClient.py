@@ -9,12 +9,15 @@ import panoptes_client as pc
 import requests
 from panoptes_client import SubjectSet, Subject, Project, Workflow, ProjectRole, User, Classification, Panoptes
 from trapper_zooniverse.Schemas import SubjectSetResults
+from pathlib import PurePath
 
 from trapper_zooniverse.i18n import setup_i18n, _
 
 import logging
 import panoptes_client as pc
 from panoptes_client import Project, SubjectSet, Workflow, User, ProjectRole
+
+from trapper_zooniverse.ui.typer.TyperUtils import TyperUtils
 
 
 class ZooniverseClientComponent:
@@ -61,7 +64,6 @@ class SubjectSetsComponent(ZooniverseClientComponent):
     def __init__(self, client: "ZooniverseClient"):
         self.client = client
         self.logger = client.logger
-
 
     def get_all(self) -> List[SubjectSet]:
         """
@@ -221,7 +223,6 @@ class SubjectSetsComponent(ZooniverseClientComponent):
             self.client.logger.error(f"Error eliminando SubjectSet {subject_set_id}: {e}")
             return False
 
-
     def with_results(self) -> List:
         """
         Devuelve los subjetsts que tienen resultados.
@@ -251,6 +252,58 @@ class SubjectSetsComponent(ZooniverseClientComponent):
 
     def with_exports(self) -> List:
         return self.with_results()
+
+    def download(self, subject_set_id: int, output_folder: Path, callback: callable = None
+                      ) -> list[str]:
+        """
+        Descarga todas las imágenes de un SubjectSet a un directorio local usando el método `download`.
+
+        Args:
+            subject_set_id (int): ID del SubjectSet.
+            output_folder (Path): Carpeta donde se guardarán las imágenes.
+            callback (callable, optional): Función que se llama antes y después de cada descarga.
+            Debe aceptar dos parámetros: subject_id (int) y status (str), donde status es 'start', 'end' o 'fail'.
+            También puede recibir el path de la imagen descargada en 'end'.
+        Returns:
+            list[str]: Lista con las rutas locales de las imágenes descargadas.
+
+        Raises:
+            ValueError: Si no se encuentra el SubjectSet o no tiene subjects.
+        """
+        self.client._ensure_connection(s)
+
+        self.client.logger.debug(f"Downloading subjectset: {subject_set_id}")
+
+        output_folder.mkdir(parents=True, exist_ok=True)
+
+        subject_set = SubjectSet.find(subject_set_id)
+        if not subject_set:
+            self.client.logger.warning(f"SubjectSet with ID {subject_set_id} not found.")
+            raise ValueError(f"SubjectSet with ID {subject_set_id} not found.")
+
+        # subjects = list(subject_set.subjects)
+        if not subject_set.subjects:
+            logging.warning(f"SubjectSet {subject_set_id} no contiene subjects.")
+            return []
+
+        downloaded_files = []
+
+        for subj in subject_set.subjects:
+            try:
+                if callback:
+                    callback(subj.id, 'start', None)  # Antes de empezar
+
+                s_cmp= SubjectsComponent(self.client)
+                path = s_cmp.download(subj.id, save_path=str(output_folder))
+                downloaded_files.append(path)
+                if callback:
+                    callback(subj.id, 'end', path)  # Al terminar
+            except Exception as e:
+                if callback:
+                    callback(subj.id, 'fail', None)  #
+                self.client.logger.warning(f"Error downloading subject {subj.id}: {e}")
+
+        return downloaded_files
 
 #
 # SubjectsComponent
@@ -396,7 +449,7 @@ class SubjectsComponent(ZooniverseClientComponent):
 
         return (all_subjects, failed_files)
 
-    def download(self, subject_id: int, save_path: str = None) -> str:
+    def download(self, subject_id: int, save_path: str = None, max_retries: int = 3) -> str:
         """
         Descarga la imagen principal de un Subject de Zooniverse.
 
@@ -414,12 +467,13 @@ class SubjectsComponent(ZooniverseClientComponent):
         """
         self.client._ensure_connection()
 
+        self.client.logger.debug(f"Downloading subject: {subject_id}")
+
         try:
             subject = Subject.find(subject_id)
             if not subject:
                 raise ValueError(f"Subject con ID {subject_id} no encontrado.")
 
-            # Obtener la primera ubicación de la imagen
             locations = subject.locations
             if not locations or not isinstance(locations, list):
                 raise ValueError(f"Subject {subject_id} no tiene imágenes asociadas.")
@@ -436,35 +490,50 @@ class SubjectsComponent(ZooniverseClientComponent):
                 if k in metadata:
                     original_filename = str(metadata[k])
                     break
+
             if not original_filename:
-                # fallback a nombre de URL
                 original_filename = os.path.basename(image_url)
+            else:
+                original_filename = str(PurePath(original_filename).name)
+
+            self.client.logger.debug(f"Original filename: {original_filename}")
 
             if save_path is None:
                 filename = f"{subject_id}_{original_filename}"
                 save_path = os.path.join(os.getcwd(), filename)
             elif os.path.isdir(save_path):
-                # Si save_path es un directorio, construir el filename dentro de él
                 filename = f"{subject_id}_{original_filename}"
                 save_path = os.path.join(save_path, filename)
 
-            # Descargar la imagen
-            response = requests.get(image_url, stream=True)
-            response.raise_for_status()  # Lanza error si status != 200
+            attempt = 0
+            while attempt <= max_retries:
+                try:
+                    response = requests.get(image_url, stream=True, timeout=10)
+                    response.raise_for_status()
 
-            with open(save_path, "wb") as f:
-                for chunk in response.iter_content(1024):
-                    f.write(chunk)
+                    with open(save_path, "wb") as f:
+                        for chunk in response.iter_content(1024):
+                            f.write(chunk)
 
-            self.client.logger.debug(f"Imagen del Subject {subject_id} descargada en {save_path}")
-            return save_path
+                    return save_path  # éxito → salir
+
+                except Exception as err:
+                    if attempt == max_retries:
+                        raise Exception(
+                            f"No se pudo descargar la imagen tras {max_retries} intentos: {err}"
+                        )
+
+                    wait_time = 2 ** attempt
+                    self.client.logger.warning(
+                        f"Error downloading subject (attempt {attempt + 1}/{max_retries}). "
+                        f"Retry in  {wait_time} seconds..."
+                    )
+
+                    time.sleep(wait_time)
+                    attempt += 1
 
         except Exception as e:
-            self.client.logger.error(f"Error descargando la imagen del Subject {subject_id}: {e}")
-            raise
-
-    from pathlib import Path
-    import logging
+            raise e
 
     def download_bulk(self, subject_set_id: int, output_folder: Path, callback: callable = None
 ) -> list[str]:
@@ -475,7 +544,7 @@ class SubjectsComponent(ZooniverseClientComponent):
             subject_set_id (int): ID del SubjectSet.
             output_folder (Path): Carpeta donde se guardarán las imágenes.
             callback (callable, optional): Función que se llama antes y después de cada descarga.
-            Debe aceptar dos parámetros: subject_id (int) y status (str), donde status es 'start' o 'end'.
+            Debe aceptar dos parámetros: subject_id (int) y status (str), donde status es 'start', 'end' o 'fail'.
             También puede recibir el path de la imagen descargada en 'end'.
         Returns:
             list[str]: Lista con las rutas locales de las imágenes descargadas.
@@ -485,21 +554,23 @@ class SubjectsComponent(ZooniverseClientComponent):
         """
         self.client._ensure_connection()
 
-        # Crear carpeta de salida si no existe
+        self.client.logger.debug(f"Downloading subjectset: {subject_set_id}")
+
         output_folder.mkdir(parents=True, exist_ok=True)
 
         subject_set = SubjectSet.find(subject_set_id)
         if not subject_set:
-            raise ValueError(f"SubjectSet con ID {subject_set_id} no encontrado.")
+            self.client.logger.warning(f"SubjectSet with ID {subject_set_id} not found.")
+            raise ValueError(f"SubjectSet with ID {subject_set_id} not found.")
 
-        subjects = list(subject_set.subjects)
-        if not subjects:
+        #subjects = list(subject_set.subjects)
+        if not subject_set.subjects:
             logging.warning(f"SubjectSet {subject_set_id} no contiene subjects.")
             return []
 
         downloaded_files = []
 
-        for subj in subjects:
+        for subj in subject_set.subjects:
             try:
                 if callback:
                     callback(subj.id, 'start', None)  # Antes de empezar
@@ -509,10 +580,12 @@ class SubjectsComponent(ZooniverseClientComponent):
                 if callback:
                     callback(subj.id, 'end', path)  # Al terminar
             except Exception as e:
-                logging.error(f"Error descargando subject {subj.id}: {e}")
+                if callback:
+                    callback(subj.id, 'fail', None)  #
+                self.client.logger.warning(f"Error downloading subject {subj.id}: {e}")
+                self.client.logger.warning(f"Error downloading subject {subj.id}: {e}")
 
         return downloaded_files
-
 
 # AnnotationsComponent
 #

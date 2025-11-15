@@ -69,11 +69,11 @@ def setup_logging(app:str, verbosity: int, logger_file:Path=None) -> None:
         logging_conf["filename"]=str(logger_file)
         logging_conf["filemode"]="a"
     
-    logging.basicConfig(**logging_conf)
-    
+    logging.basicConfig(**logging_conf, force=True)
+
     # Set level for this module's logger
     logger.setLevel(log_level)
-
+    logger.info("Hola2")
     # Set level for trapper_tools modules
     logging.getLogger(app).setLevel(log_level)
 

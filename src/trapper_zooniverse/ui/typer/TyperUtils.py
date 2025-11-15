@@ -45,12 +45,12 @@ class TyperUtils:
     @staticmethod
     def error(message: str):
         TyperUtils.console.print(f"[red]:cross_mark:[/red] {message}")
-        TyperUtils.logger.error(message)
+        TyperUtils.logger.error(message, exc_info=True)
 
     @staticmethod
     def fatal(message: str):
         TyperUtils.console.print(f"[red]:skull:[/red] {message}")
-        TyperUtils.logger.critical(message)
+        TyperUtils.logger.critical(message, exc_info=True)
         raise typer.Exit(code=1)
 
     @staticmethod

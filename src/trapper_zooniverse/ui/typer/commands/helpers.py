@@ -25,10 +25,14 @@ locations(...)
     Retrieve locations from a Trapper instance and display them.
 """
 import json
+import tempfile
 from pathlib import Path
 from typing import Annotated
+
+from rich.progress import Progress, TimeElapsedColumn, BarColumn, TimeRemainingColumn
 from typer_config import conf_callback_factory
 
+from trapper_zooniverse.ZooniverseClient import ZooniverseClient
 from trapper_zooniverse.helpers import check_trapper_connection, check_zooniverse_connection, \
     zooniverse_get_workflows, zooniverse_get_subject_sets, trapper_collections, zooniverse_get_subjects, \
     trapper_deployments
@@ -108,7 +112,7 @@ def dynamic_dynaconf_callback(ctx, param, value):
             if value is None:
                 ctx.params[key] = settings["TRAPPER"]["trapper_password"]
 
-        if key == "zooniverse_user":
+        if key == "zooniverse_username":
             if value is None:
                 ctx.params[key] = settings["ZOONIVERSE"]["zooniverse_username"]
         if key == "zooniverse_password":
@@ -519,6 +523,91 @@ def subjects(ctx: typer.Context,
     except Exception as e:
         TyperUtils.error(str(e))
 
+@app.command(
+    help=_("Download subjects (images) from a Zooniverse subjetset"),
+    short_help=_("Download a subjectset"))
+def download_ss(ctx: typer.Context,
+    zooniverse_username: str = typer.Option(
+        None,
+        help=_("Username to authenticate with the Trapper server")
+    ),
+    zooniverse_password: str = typer.Option(
+        None,
+        help=_("Password for the specified user (use only if no access token is provided)")
+    ),
+
+    zooniverse_project_id: str = typer.Option(
+        None,
+        help=_("Password for the specified user (use only if no access token is provided)")
+    ),
+
+    id: Annotated[int, typer.Argument(help=("Subjectset ID"))] = ...,
+    out_put_dir: Annotated[Path, typer.Argument(help=("Subjectset ID"))] = None,
+
+                config: Annotated[
+              Path,
+              typer.Option(
+                  hidden=True,
+                  help=_("File to save the report"),
+                  callback=dynamic_dynaconf_callback
+              )
+          ] = None,
+):
+    """
+    Retrieve locations from a Trapper instance and display them.
+
+    :param ctx: Typer context.
+    :type ctx: typer.Context
+    :param url: Base URL of the Trapper server.
+    :type url: str
+    :param user: Username for authentication.
+    :type user: str
+    :param password: Password for the user (optional).
+    :type password: str
+    :param token: Access token (optional).
+    :type token: str
+    :param config: Internal configuration option (dynamic callback).
+    :type config: pathlib.Path | None
+    :raises Exception: If retrieval fails a fatal message is logged.
+    """
+    settings = ctx.obj.get("settings", {})
+
+    try:
+        if out_put_dir is None:
+            temp_dir = tempfile.mkdtemp(prefix="bulk_download_")
+
+        zooniverse_client = ZooniverseClient(zooniverse_project_id,zooniverse_username, zooniverse_password)
+        TyperUtils.info(f"Retrieving subjects from {zooniverse_project_id}...")
+        ss = zooniverse_client.subjectsets.get_by_id(id)
+        num_subjects= getattr(ss, "set_member_subjects_count", "-")
+
+        if out_put_dir is None:
+            out_put_dir = tempfile.mkdtemp(prefix="bulk_download_")
+
+        with Progress(
+          "[progress.description]{task.description}",
+                BarColumn(),  # Barra de progreso
+                "[progress.percentage]{task.percentage:>3.0f}%",
+                TimeElapsedColumn(),  # Tiempo transcurrido
+                TimeRemainingColumn(),  # Tiempo estimado restante
+                transient=False  # No desaparece al finalizar
+        ) as progress:
+                task = progress.add_task("[cyan]Downloading subjects...", total=num_subjects)
+
+                # Definimos el callback
+                def update_progress(file, status, msg):
+                    if status == "start":
+                        progress.log(f"[yellow]→ Starting download: {file}")
+                        progress.update(task, advance=1, description=f"[green]Downloading: {file}")
+                    elif status == "end":
+                        progress.log(f"[green]✓ Finished: {file}")
+
+                zooniverse_client.subjects.download_bulk(id, output_folder=Path(out_put_dir), callback=update_progress)
+
+        TyperUtils.success(f"Subjects downloaded successfully in {out_put_dir}!")
+    except Exception as e:
+        raise e
+        TyperUtils.error(str(e))
 
 @app.command(help=_("This command allows users to fetch all deployments from trapper instance."),
              short_help=_("Retrieve all deployments from Trapper instance "))
