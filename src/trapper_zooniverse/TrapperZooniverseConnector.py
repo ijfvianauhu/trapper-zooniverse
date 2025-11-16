@@ -148,7 +148,7 @@ class TrapperZooniverseConnector:
             self.logger.debug(f"No valid observations found for collection {collection} and classification project {classification_project}.")
 
         self.logger.debug("Preparando las secuencias")
-        print(f"PRepairing secuencias..")
+        print(f"Preparing sequences..")
 
         sequences = self._generate_zoo_images_from_media_map(media_map, max_interval, n_images_seq)
 

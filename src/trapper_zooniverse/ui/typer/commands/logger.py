@@ -82,7 +82,7 @@ def show(
     else:
         TyperUtils.fatal(_(f"Log file not found: {log_path}"))
 
-@app.command("logger-archive", help=_("Compress the log file and remove the original"),
+@app.command("archive", help=_("Compress the log file and remove the original"),
              short_help=_("Compress and archive log"))
 def archive( ctx: typer.Context,):
     """

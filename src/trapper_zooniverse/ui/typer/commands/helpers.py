@@ -109,15 +109,12 @@ def dynamic_dynaconf_callback(ctx, param, value):
         "zooniverse_project_id": ("ZOONIVERSE", "zooniverse_project_id"),
     }
 
-    print(results)
-    print("---------------------")
     for param_name in ctx.params:
         if ctx.params[param_name] is None and param_name in mapping:
             section, key = mapping[param_name]
             ctx.params[param_name] = settings[section][key]
 
     return results
-
 
 @app.callback()
 def main_callback(ctx: typer.Context):
@@ -232,10 +229,10 @@ def test_connection(ctx: typer.Context,
 
 
 @app.command(
-    help=_("Retrieve workflows from a Zooniverse project. "
-            "If a project ID is provided, only workflows for that project will be retrieved."
+    help=_("Retrieve workflows from a Zooniverse project."
+            "If a project ID is provided, only workflows for that project will be retrieved (alias: wf)."
             ),
-    short_help=_("Retrieve workflows from a Zooniverse project"))
+    short_help=_("Retrieve workflows from a Zooniverse project") + " (alias: wf)")
 def workflows(ctx: typer.Context,
               zooniverse_username: str = typer.Option(
                   None,
@@ -295,12 +292,14 @@ def workflows(ctx: typer.Context,
     else:
         ZooUtils.show_workflow(workflows,raw)
 
+app.command(name="wf", hidden=True) (workflows)
+
 
 @app.command(help=_(
         "Retrieve subject sets from a Zooniverse project. "
         "If a workflow ID is provided, only the subject sets linked to that workflow will be retrieved."
-    ),
-    short_help=_("Retrieve all or workflow-specific subject sets from a Zooniverse project")
+    ) + "(alias: ss)",
+    short_help=_("Retrieve all or workflow-specific subject sets from a Zooniverse project" + " (alias: ss)")
 )
 def subjectsets(ctx: typer.Context,
             zooniverse_username: str = typer.Option(
@@ -373,8 +372,10 @@ def subjectsets(ctx: typer.Context,
     else:
         ZooUtils.show_subject_set(results[0])
 
-@app.command(help=_("This command allows users to fetch all collections from trapper instance."),
-             short_help=_("Retrieve all collections from Trapper instance "))
+app.command(name="ss", hidden=True) (subjectsets)
+
+@app.command(help=_("This command allows users to fetch all collections from trapper instance.") + "(alias: col)",
+             short_help=_("Retrieve all collections from Trapper instance ") + "(alias: col)")
 def collections(ctx: typer.Context,
 
         trapper_url: str = typer.Option(
@@ -438,10 +439,11 @@ def collections(ctx: typer.Context,
     #logger.info(f"Retrieved {len(results[0].results)} collections")
     TyperUtils.json2Table(results[0], title="Collections", columns=["pk", "name", "description", "owner"])
 
+app.command(name="col", hidden=True) (collections)
 
 @app.command(
-    help=_("Retrieve a specific subject (image) from a Zooniverse project"),
-    short_help=_("Retrieve a subject"))
+    help=_("Retrieve a specific subject (image) from a Zooniverse project" + "(alias: sbj)"),
+    short_help=_("Retrieve a subject" + "(alias: sbj)"))
 def subjects(ctx: typer.Context,
     zooniverse_username: str = typer.Option(
         None,
@@ -515,6 +517,7 @@ def subjects(ctx: typer.Context,
             ZooUtils.show_subject(results[1], title="Subjects")
     except Exception as e:
         TyperUtils.error(str(e))
+app.command(name="sbj", hidden=True) (subjects)
 
 @app.command(
     help=_("Download subjects (images) from a Zooniverse subjetset (alias: dl_ss)."),
