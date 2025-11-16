@@ -90,7 +90,7 @@ class TrapperZooniverseConnector:
             delay_seconds_per_subject=30,
             progress_callback: Optional[Callable[[str, int], None]] = None  # <--- callback
     ) -> Report:
-        report2 = Report(f"Collection {collection} from {self.trapper.base_url}", type="UploadMediaReport" )
+        report = Report(f"Collection {collection} from {self.trapper.base_url}", type="UploadMediaReport" )
         metadata = {}
 
         start_time = datetime.now().isoformat()
@@ -137,7 +137,7 @@ class TrapperZooniverseConnector:
         self.logger.debug(
             f"Obtained {len(observations.results)} observations after filtering from classification project  {classification_project} and collection {collection}")
 
-        print(f"Geering utl for medias classified...")
+        print(f"Getting url for medias classified...")
 
         media_map=self._merge_media_and_observations(media,observations)
 
@@ -148,7 +148,7 @@ class TrapperZooniverseConnector:
             self.logger.debug(f"No valid observations found for collection {collection} and classification project {classification_project}.")
 
         self.logger.debug("Preparando las secuencias")
-        print(f"PReparing secuencias..")
+        print(f"PRepairing secuencias..")
 
         sequences = self._generate_zoo_images_from_media_map(media_map, max_interval, n_images_seq)
 
@@ -163,7 +163,7 @@ class TrapperZooniverseConnector:
                     # Excluir si es privada
                     if not media.get("filePublic", False):
                         self.logger.warning(f"Excluyendo imagen privada {media['mediaID']} {media['filePath']}")
-                        report2.add_error(f"{media['mediaID']}@media", "select","skipped_private")
+                        report.add_error(f"{media['mediaID']}@media", "select","skipped_private")
                         continue
 
                     # Excluir si no es animal (solo para secuencias intermedias)
@@ -172,7 +172,7 @@ class TrapperZooniverseConnector:
                         if any(o.lower() != "animal" for o in obs_types):
                             self.logger.warning(
                                 f"Excluyendo {media['mediaID']} {media['filePath']} con tipos {media['observationTypes']}")
-                            report2.add_error(f"{media['mediaID']}@media", "select","skipped_human")
+                            report.add_error(f"{media['mediaID']}@media", "select","skipped_human")
                             continue
 
                     name = self._get_zoo_filename(media)
@@ -185,13 +185,13 @@ class TrapperZooniverseConnector:
                         self._download_image(str(media['filePath']), local_path, attempts=5, delay_seconds=60)
                         origin = f"{self.trapper.base_url}:media:{media['mediaID']}"
                         metadata[name] = {"origin":origin}
-                        report2.add_success(f"{media['mediaID']}@media", "download",**{"path":local_path})
+                        report.add_success(f"{media['mediaID']}@media", "download",**{"path":local_path})
                         import time
                         import random
                         time.sleep(random.uniform(1, 4))
                     except Exception as e:
                         self.logger.error(f"Failed to download {media['mediaID']}: {e}")
-                        report2.add_error(f"{media['mediaID']}@media",
+                        report.add_error(f"{media['mediaID']}@media",
                                           "download",
                                           str(e),
                                           **{"path":str(media['filePath'])})
@@ -221,19 +221,19 @@ class TrapperZooniverseConnector:
                 import re
                 match=re.search(r"/(\d+)_.*$",success["path"])
                 media_id = match.group(1)
-                report2.add_success(f"{media_id}@media", "upload",
+                report.add_success(f"{media_id}@media", "upload",
                                     **{"subject_id": success["subject_id"], "path": success["path"]})
 
             for failure in fail:
                 import re
                 match = re.search(r"/(\d+)_.*$", success["path"])
                 media_id = match.group(1)
-                report2.add_error(f"{media_id}@media", "upload","failed",
+                report.add_error(f"{media_id}@media", "upload","failed",
                                   **{"path": failure})
 
-        report2.finish()
+        report.finish()
 
-        return report2
+        return report
 
     def upload_annotations(
             self,

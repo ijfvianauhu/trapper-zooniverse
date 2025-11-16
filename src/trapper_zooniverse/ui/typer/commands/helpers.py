@@ -3,7 +3,7 @@
 Helpers CLI commands module for Typer.
 
 Provides utilities to test connections and retrieve information from a
-Trapper instance, and to check external tools (ffmpeg, exiftool).
+Trapper instance and Zooniverse projects.
 
 Functions
 ---------
@@ -15,8 +15,6 @@ main_callback(ctx: typer.Context)
     Callback executed before any Typer command.
 test_connection(...)
     Test connection to a Trapper server (API).
-test_external_tools(ctx: typer.Context)
-    Test availability of FFMPEG and exiftool using project settings.
 classification_projects(...)
     Retrieve classification projects from a Trapper instance and display them.
 research_projects(...)
@@ -26,7 +24,9 @@ locations(...)
 """
 import json
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from queue import Queue, Empty
 from typing import Annotated
 
 from rich.progress import Progress, TimeElapsedColumn, BarColumn, TimeRemainingColumn
@@ -36,6 +36,7 @@ from trapper_zooniverse.ZooniverseClient import ZooniverseClient
 from trapper_zooniverse.helpers import check_trapper_connection, check_zooniverse_connection, \
     zooniverse_get_workflows, zooniverse_get_subject_sets, trapper_collections, zooniverse_get_subjects, \
     trapper_deployments
+from trapper_zooniverse.reports import Report
 from trapper_zooniverse.ui.typer.TyperUtils import TyperUtils
 from trapper_zooniverse.ui.typer.ZooUtils import ZooUtils
 from trapper_zooniverse.ui.typer.i18n import _
@@ -96,33 +97,27 @@ def dynamic_dynaconf_callback(ctx, param, value):
     :rtype: Any
     """
     settings = ctx.obj.get("settings", {}).as_dict()
-    settings_manager = ctx.obj.get("setting_manager")
     json_str = json.dumps(settings, default=str)
-    a = base_conf_callback(ctx, param, json_str)
+    results = base_conf_callback(ctx, param, json_str)
 
-    for key, value in ctx.params.items():
-        if key == "trapper_user":
-            if value is None:
-                ctx.params[key] = settings["TRAPPER"]["trapper_username"]
-        if key == "trapper_url":
-            if value is None:
-                ctx.params[key] = settings["TRAPPER"]["trapper_url"]
+    mapping = {
+        "trapper_user": ("TRAPPER", "trapper_username"),
+        "trapper_url": ("TRAPPER", "trapper_url"),
+        "trapper_password": ("TRAPPER", "trapper_password"),
+        "zooniverse_username": ("ZOONIVERSE", "zooniverse_username"),
+        "zooniverse_password": ("ZOONIVERSE", "zooniverse_password"),
+        "zooniverse_project_id": ("ZOONIVERSE", "zooniverse_project_id"),
+    }
 
-        if key == "trapper_password":
-            if value is None:
-                ctx.params[key] = settings["TRAPPER"]["trapper_password"]
+    print(results)
+    print("---------------------")
+    for param_name in ctx.params:
+        if ctx.params[param_name] is None and param_name in mapping:
+            section, key = mapping[param_name]
+            ctx.params[param_name] = settings[section][key]
 
-        if key == "zooniverse_username":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE"]["zooniverse_username"]
-        if key == "zooniverse_password":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE"]["zooniverse_password"]
-        if key == "zooniverse_project_id":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE"]["zooniverse_project_id"]
+    return results
 
-    return a
 
 @app.callback()
 def main_callback(ctx: typer.Context):
@@ -139,8 +134,8 @@ def main_callback(ctx: typer.Context):
     pass
 
 
-@app.command(help=_("Test connection to Trapper server (API)"),
-             short_help=_("Test connection to Trapper server (API & FTPS)"))
+@app.command(help=_("Test connection to Trapper server instance and Zooniverse"),
+             short_help=_("Test connection to Trapper server instance and Zooniverse"))
 def test_connection(ctx: typer.Context,
                     trapper_url: str = typer.Option(
                         None,
@@ -148,33 +143,29 @@ def test_connection(ctx: typer.Context,
                     ),
                     trapper_user: str = typer.Option(
                         None,
-                        help=_("Username to authenticate with the Trapper server")
+                        help=_("Username for Trapper authentication. Required unless an access token is provided")
                     ),
                     trapper_password: str = typer.Option(
                         None,
-                        "--password",
-                        "-p",
-                        help=_("Password for the specified user (use only if no access token is provided)")
+                        help=_("Password for the specified Trapper user. Only needed if no access token is used.")
                     ),
                     trapper_token: str = typer.Option(
                         None,
-                        "--token",
-                        "-t",
-                        help=_("Access token for the Trapper API (alternative to using a password)"),
+                        help=_("Access token for the Trapper API. Can be used instead of username/password."),
                     ),
 
-                    zooniverse_username: str = typer.Argument(
+                    zooniverse_username: str = typer.Option(
                         None,
-                        help=_("Username to authenticate with the Trapper server")
+                        help=_("Username to authenticate with Zooniverse.")
                     ),
                     zooniverse_password: str = typer.Option(
                         None,
-                        help=_("Password for the specified user (use only if no access token is provided)")
+                        help=_("Password for the specified Zooniverse user")
                     ),
 
                     zooniverse_project_id: str = typer.Option(
                         None,
-                        help=_("Password for the specified user (use only if no access token is provided)")
+                        help=_("ID of the Zooniverse project to connect to.")
                     ),
 
                     config: Annotated[
@@ -215,14 +206,12 @@ def test_connection(ctx: typer.Context,
     except Exception as e:
         TyperUtils.fatal(_(f"Failed to connect to Trapper API. Check your settings: {str(e)}"))
 
-
     try:
         TyperUtils.info(_("Testing Zooniverse API connection..."))
         check_zooniverse_connection(zooniverse_username, zooniverse_password, zooniverse_project_id)
         TyperUtils.success(_("Zooniverse API connection successful!"))
     except Exception as e:
         TyperUtils.fatal(_(f"Failed to connect to Trapper API. Check your settings: {str(e)}"))
-
 
     results = TyperUtils.run_tasks_with_progress(
         [
@@ -242,28 +231,31 @@ def test_connection(ctx: typer.Context,
     )
 
 
-@app.command(help=_("Test the availability of FFMPEG & exiftool"),
-             short_help=_("Test the availability of FFMPEG & exiftool"))
+@app.command(
+    help=_("Retrieve workflows from a Zooniverse project. "
+            "If a project ID is provided, only workflows for that project will be retrieved."
+            ),
+    short_help=_("Retrieve workflows from a Zooniverse project"))
 def workflows(ctx: typer.Context,
               zooniverse_username: str = typer.Option(
                   None,
-                  help=_("Username to authenticate with the Trapper server")
+                  help=_("Username to authenticate with Zooniverse.")
               ),
               zooniverse_password: str = typer.Option(
                   None,
-                  help=_("Password for the specified user (use only if no access token is provided)")
+                  help=_("Password for the specified Zooniverse user")
               ),
 
               zooniverse_project_id: str = typer.Option(
                   None,
-                  help=_("Password for the specified user (use only if no access token is provided)")
+                  help=_("ID of the Zooniverse project to connect to.")
               ),
 
               id: Annotated[int, typer.Argument(help=("Workflow ID"))] = None,
 
               raw: Annotated[
                   bool,
-                  typer.Option(help="Print raw output instead of table")
+                  typer.Option(help=_("Display raw JSON output instead of formatted table"))
               ] = False,
 
               config: Annotated[
@@ -284,9 +276,6 @@ def workflows(ctx: typer.Context,
     :type ctx: typer.Context
     :raises Exception: If any check raises, the error is logged.
     """
-    #project_name = ctx.obj.get("project")
-    #settings_manager: SettingsManager = ctx.obj.get("setting_manager")
-    #settings = settings_manager.load_settings(project_name)
 
     results = TyperUtils.run_tasks_with_progress(
         [
@@ -307,28 +296,32 @@ def workflows(ctx: typer.Context,
         ZooUtils.show_workflow(workflows,raw)
 
 
-@app.command(help=_("Get classification project info from trapper instance"),
-             short_help=_("Retrieve all or single subject sets from Zooniverse "))
+@app.command(help=_(
+        "Retrieve subject sets from a Zooniverse project. "
+        "If a workflow ID is provided, only the subject sets linked to that workflow will be retrieved."
+    ),
+    short_help=_("Retrieve all or workflow-specific subject sets from a Zooniverse project")
+)
 def subjectsets(ctx: typer.Context,
-    zooniverse_username: str = typer.Option(
-        None,
-        help=_("Username to authenticate with the Trapper server")
-    ),
-    zooniverse_password: str = typer.Option(
-        None,
-        help=_("Password for the specified user (use only if no access token is provided)")
-    ),
+            zooniverse_username: str = typer.Option(
+                None,
+                help=_("Username to authenticate with Zooniverse.")
+            ),
+            zooniverse_password: str = typer.Option(
+                None,
+                help=_("Password for the specified Zooniverse user")
+            ),
 
-    zooniverse_project_id: str = typer.Option(
-        None,
-        help=_("Password for the specified user (use only if no access token is provided)")
-    ),
+            zooniverse_project_id: str = typer.Option(
+                None,
+                help=_("ID of the Zooniverse project to connect to.")
+            ),
 
-    id: Annotated[int, typer.Argument(help=("Workflow ID"))] = None,
+            id: Annotated[int, typer.Argument(help=("Workflow ID"))] = None,
 
     exports: Annotated[
         bool,
-        typer.Option(help="Print raw output instead of table")
+        typer.Option(help="Only print subjectsets with exports")
     ] = False,
 
     wf_id: Annotated[
@@ -524,8 +517,8 @@ def subjects(ctx: typer.Context,
         TyperUtils.error(str(e))
 
 @app.command(
-    help=_("Download subjects (images) from a Zooniverse subjetset"),
-    short_help=_("Download a subjectset"))
+    help=_("Download subjects (images) from a Zooniverse subjetset (alias: dl_ss)."),
+    short_help=_("Download a subjectset (alias: dl_ss)"))
 def download_ss(ctx: typer.Context,
     zooniverse_username: str = typer.Option(
         None,
@@ -584,30 +577,67 @@ def download_ss(ctx: typer.Context,
         if out_put_dir is None:
             out_put_dir = tempfile.mkdtemp(prefix="bulk_download_")
 
+        report: Report = Report(f"Bulk Download Report for subjectset {id}")
+
+        event_queue = Queue()
+
+        def callback(status, subject_id, name):
+            event_queue.put((status, subject_id, name))
+
         with Progress(
-          "[progress.description]{task.description}",
-                BarColumn(),  # Barra de progreso
+                "[progress.description]{task.description}",
+                BarColumn(),
                 "[progress.percentage]{task.percentage:>3.0f}%",
-                TimeElapsedColumn(),  # Tiempo transcurrido
-                TimeRemainingColumn(),  # Tiempo estimado restante
-                transient=False  # No desaparece al finalizar
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                transient=False
         ) as progress:
-                task = progress.add_task("[cyan]Downloading subjects...", total=num_subjects)
 
-                # Definimos el callback
-                def update_progress(file, status, msg):
+            task = progress.add_task(
+                f"[cyan]Downloading subjects from subjectset {id}...",
+                total=num_subjects
+            )
+
+            # Lanzamos download() en segundo plano
+            future = ThreadPoolExecutor(1).submit(
+                zooniverse_client.subjectsets.download,
+                id, Path(out_put_dir),
+                callback, 8, event_queue
+            )
+
+            # Procesamos eventos
+            while True:
+                try:
+                    status, subject_id, name = event_queue.get(timeout=0.1)
+
                     if status == "start":
-                        progress.log(f"[yellow]→ Starting download: {file}")
-                        progress.update(task, advance=1, description=f"[green]Downloading: {file}")
-                    elif status == "end":
-                        progress.log(f"[green]✓ Finished: {file}")
+                        progress.log(f"[yellow]→ Starting {name}")
 
-                zooniverse_client.subjects.download_bulk(id, output_folder=Path(out_put_dir), callback=update_progress)
+                    elif status == "end":
+                        progress.advance(task, 1)
+                        report.add_success(name, "downloaded")
+                        progress.log(f"[green]✓ Finished {name}")
+
+                    elif status == "fail":
+                        report.add_error(subject_id, "error")
+                        progress.log(f"[red]✗ Failed {subject_id}")
+
+                except Empty:
+                    pass
+
+                if future.done() and event_queue.empty():
+                    break
+
+            report.finish()
 
         TyperUtils.success(f"Subjects downloaded successfully in {out_put_dir}!")
+        report_output_file = TyperUtils.report_save(report)
+        TyperUtils.success(f"Report saved in  {report_output_file}!")
+
     except Exception as e:
-        raise e
         TyperUtils.error(str(e))
+
+app.command(name="dl_ss", hidden=True) (download_ss)
 
 @app.command(help=_("This command allows users to fetch all deployments from trapper instance."),
              short_help=_("Retrieve all deployments from Trapper instance "))

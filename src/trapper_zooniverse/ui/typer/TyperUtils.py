@@ -1,5 +1,7 @@
 import json
 import os
+import uuid
+from datetime import datetime
 from pathlib import Path, PosixPath
 from typing import Union, List, Optional, Dict, Any, Callable, Tuple
 
@@ -252,9 +254,25 @@ class TyperUtils:
         except FileNotFoundError:
             raise ValueError(f"ZIP file '{Path}' not found.")
 
+    #
+    # Report methods
+    #
+
+
     @staticmethod
     def get_default_report_dir():
         return Path(TyperUtils.home) / ("reports")
+
+    @staticmethod
+    def report_save(report, file_name=None):
+        results_dir = TyperUtils.get_default_report_dir()
+        results_dir.mkdir(parents=True, exist_ok=True)
+        if file_name is None:
+            unique_id = uuid.uuid4().hex[:8]
+            file_name = f"report_{unique_id}_{datetime.now():%Y%m%d_%H%M%S}.yaml"
+        report_file = results_dir / file_name
+        report.to_yaml(report_file)
+        return report_file
 
     @staticmethod
     def print_reports_in_directory(results_dir: Path):

@@ -10,7 +10,6 @@ trapper_url= "https://wildintel-trap.uhu.es/"
 trapper_token= ""
 
 [ZOONIVERSE]
-
 zooniverse_username= ""
 zooniverse_password= ""
 zooniverse_project_id= ""
@@ -21,5 +20,4 @@ upload_collection_max_interval=120
 upload_collection_attempts=5
 upload_collection_delay=15
 upload_collection_max_attempts_per_subject=5
-upload_collection_delay_seconds_per_subject= 30
-output_dir=
+upload_collection_delay_seconds_per_subject=30

@@ -1,8 +1,11 @@
 import os
 import time
 import logging
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from queue import Queue
+from threading import Thread
 from typing import List, Tuple, Optional, Union, Dict
 import json
 import panoptes_client as pc
@@ -253,55 +256,43 @@ class SubjectSetsComponent(ZooniverseClientComponent):
     def with_exports(self) -> List:
         return self.with_results()
 
-    def download(self, subject_set_id: int, output_folder: Path, callback: callable = None
-                      ) -> list[str]:
-        """
-        Descarga todas las imágenes de un SubjectSet a un directorio local usando el método `download`.
+    def download(self, subject_set_id: int, output_folder: Path,
+                 callback: callable = None, max_workers: int = 8,
+                 event_queue: Queue = None) -> list[str]:
 
-        Args:
-            subject_set_id (int): ID del SubjectSet.
-            output_folder (Path): Carpeta donde se guardarán las imágenes.
-            callback (callable, optional): Función que se llama antes y después de cada descarga.
-            Debe aceptar dos parámetros: subject_id (int) y status (str), donde status es 'start', 'end' o 'fail'.
-            También puede recibir el path de la imagen descargada en 'end'.
-        Returns:
-            list[str]: Lista con las rutas locales de las imágenes descargadas.
-
-        Raises:
-            ValueError: Si no se encuentra el SubjectSet o no tiene subjects.
-        """
-        self.client._ensure_connection(s)
-
-        self.client.logger.debug(f"Downloading subjectset: {subject_set_id}")
-
-        output_folder.mkdir(parents=True, exist_ok=True)
+        self.client._ensure_connection()
 
         subject_set = SubjectSet.find(subject_set_id)
-        if not subject_set:
-            self.client.logger.warning(f"SubjectSet with ID {subject_set_id} not found.")
-            raise ValueError(f"SubjectSet with ID {subject_set_id} not found.")
-
-        # subjects = list(subject_set.subjects)
-        if not subject_set.subjects:
-            logging.warning(f"SubjectSet {subject_set_id} no contiene subjects.")
+        if not subject_set or not subject_set.subjects:
             return []
 
         downloaded_files = []
 
-        for subj in subject_set.subjects:
+        def download_one(subj):
+            """Descarga un subject y devuelve su nombre."""
             try:
-                if callback:
-                    callback(subj.id, 'start', None)  # Antes de empezar
+                name = getattr(subj, "name", f"subject_{subj.id}")
 
-                s_cmp= SubjectsComponent(self.client)
-                path = s_cmp.download(subj.id, save_path=str(output_folder))
-                downloaded_files.append(path)
                 if callback:
-                    callback(subj.id, 'end', path)  # Al terminar
+                    callback("start", subj.id, name)
+
+                s_cmp = SubjectsComponent(self.client)
+                s_cmp.download(subj.id, save_path=str(output_folder))
+
+                if callback:
+                    callback("end", subj.id, name)
+
+                return name
+
             except Exception as e:
                 if callback:
-                    callback(subj.id, 'fail', None)  #
-                self.client.logger.warning(f"Error downloading subject {subj.id}: {e}")
+                    callback("fail", subj.id, None)
+                return None
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for name in pool.map(download_one, subject_set.subjects):
+                if name:
+                    downloaded_files.append(name)
 
         return downloaded_files
 

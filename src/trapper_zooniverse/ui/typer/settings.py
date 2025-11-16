@@ -40,22 +40,14 @@ SETTINGS_ORDER = {
     "LOGGER": ["loglevel", "filename"],
     "TRAPPER": ["trapper_username", "trapper_password", "trapper_url", "trapper_token"],
     "ZOONIVERSE" : [ "zooniverse_username","zooniverse_password",  "zooniverse_project_id"],
-    "GENERAL": [
-        "host", "login", "password", "project_id", "verify_ssl",
-        "ffmpeg", "exiftool", "data_dir",
-    ],
-    "WILDINTEL": [
-        "rp_name", "coverage", "publisher", "owner", "tolerance_hours",
-        "resize_img", "resize_img_size", "overwrite", "output_dir",
-    ],
 
     "ZOONIVERSE_CONNECTOR" :[
         "upload_collection_n_images_seq",
         "upload_collection_max_interval",
         "upload_collection_attempts",
         "upload_collection_delay",
-        "upload_collection_ max_attempts_per_subject",
-        "upload_collection_ delay_seconds_per_subject",
+        "upload_collection_max_attempts_per_subject",
+        "upload_collection_delay_seconds_per_subject",
     ]
 }
 
@@ -239,39 +231,23 @@ class SettingsManager:
 
             # GENERAL section
             Validator(
-                "GENERAL.host",
+                "TRAPPER.trapper_url",
                 must_exist=True,
                 cast=str,
                 condition=lambda v: v.startswith("http://") or v.startswith("https://"),
-                messages={"condition": "GENERAL.host must be a valid URL"},
+                messages={"condition": "TRAPPER.trapper_host must be a valid URL"},
             ),
             Validator(
-                "GENERAL.login",  # must be an email-like string
+                "TRAPPER.trapper_username",  # must be an email-like string
                 must_exist=True,
                 cast=str,
                 condition=lambda v: "@" in v and "." in v.split("@")[-1],
-                messages={"condition": "GENERAL.login must be a valid email address."},
+                messages={"condition": "TRAPPER.trapper_username must be a valid email address."},
             ),
-            Validator("GENERAL.project_id", must_exist=True, is_type_of=int, gte=1),
-            Validator("GENERAL.verify_ssl", is_type_of=bool),
-            Validator("GENERAL.ffmpeg", must_exist=True, cast=str, cont="ffmpeg"),
-            Validator("GENERAL.exiftool", must_exist=True, cast=str, cont="exiftool"),
-            Validator(
-                "GENERAL.data_dir",
-                condition=lambda value: not value or Path(value).is_dir(),
-                must_exist=True,
-                messages={
-                    "condition": "The path specified in GENERAL.data_dir must be an existing directory."
-                },
-            ),
-            Validator(
-                "WILDINTEL.output_dir",
-                condition=lambda value: Path(value).is_dir(),
-                must_exist=True,
-                messages={
-                    "condition": "The path specified in WILDINTEL.output_dir must be an existing directory."
-                },
-            ),
+
+            Validator("ZOONIVERSE.zooniverse_username", must_exist=True, is_type_of=str),
+            Validator("ZOONIVERSE.zooniverse_password", must_exist=True, is_type_of=str),
+            Validator("ZOONIVERSE.zooniverse_project_id", must_exist=True, is_type_of=str)
         ]
         return validators
 
