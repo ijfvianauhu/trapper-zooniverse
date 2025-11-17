@@ -374,7 +374,8 @@ class SubjectsComponent(ZooniverseClientComponent):
 
         return None
 
-    def create_bulk(self, file_paths, subject_set:SubjectSet, metadata=None, attempts=5, delay=15, max_attempts_per_subject=5, delay_seconds_per_subject=30):
+    def create_bulk(self, file_paths, subject_set:SubjectSet, metadata=None, attempts=5, delay=15,
+                    max_attempts_per_subject=5, delay_seconds_per_subject=30, callback: callable = None):
         """
         Upload multiple subjects to a Zooniverse SubjectSet with batch-level retries.
         If any uploads fail, retries only those in subsequent rounds, with increasing delay.
@@ -415,6 +416,9 @@ class SubjectsComponent(ZooniverseClientComponent):
 
             for path in remaining_files:
 
+                if callback:
+                    callback(path, 'start', None)  # Antes de empezar
+
                 subject = self.create(path,
                                       subject_set,
                                       metadata[os.path.basename(path)],
@@ -422,6 +426,8 @@ class SubjectsComponent(ZooniverseClientComponent):
                                       delay_seconds_per_subject
                 )
                 if subject:
+                    if callback:
+                        callback(path, 'end', None)  # Antes de empezar
                     all_subjects.append({"path": path, "subject_id": subject.id})
                 else:
                     current_failed.append(path)
@@ -440,7 +446,7 @@ class SubjectsComponent(ZooniverseClientComponent):
 
         return (all_subjects, failed_files)
 
-    def download(self, subject_id: int, save_path: str = None, max_retries: int = 3) -> str:
+    def download(self, subject_id: int, save_path: str = None, max_retries: int = 3, delay_seconds:int =5) -> str:
         """
         Descarga la imagen principal de un Subject de Zooniverse.
 
@@ -496,8 +502,7 @@ class SubjectsComponent(ZooniverseClientComponent):
                 filename = f"{subject_id}_{original_filename}"
                 save_path = os.path.join(save_path, filename)
 
-            attempt = 0
-            while attempt <= max_retries:
+            for attempt in range(1, max_retries + 1):
                 try:
                     response = requests.get(image_url, stream=True, timeout=10)
                     response.raise_for_status()
@@ -506,7 +511,7 @@ class SubjectsComponent(ZooniverseClientComponent):
                         for chunk in response.iter_content(1024):
                             f.write(chunk)
 
-                    return save_path  # éxito → salir
+                    return save_path # éxito → salir
 
                 except Exception as err:
                     if attempt == max_retries:
@@ -514,12 +519,12 @@ class SubjectsComponent(ZooniverseClientComponent):
                             f"No se pudo descargar la imagen tras {max_retries} intentos: {err}"
                         )
 
-                    wait_time = 2 ** attempt
+                    wait_time = delay_seconds * (2 ** (attempt - 1))
+
                     self.client.logger.warning(
-                        f"Error downloading subject (attempt {attempt + 1}/{max_retries}). "
+                        f"Error downloading subject (attempt {attempt}/{max_retries}). "
                         f"Retry in  {wait_time} seconds..."
                     )
-
                     time.sleep(wait_time)
                     attempt += 1
 

@@ -72,7 +72,7 @@ def list(
     logger = ctx.obj.get("logger", logging.getLogger(__name__))
 
     results_dir = TyperUtils.get_default_report_dir()
-    TyperUtils.print_reports_in_directory(results_dir)
+    TyperUtils.reports_in_directory(results_dir)
 
 @app.command(help=_("Validate and show current project settings"),
              short_help=_("Validate and show current project settings"))
@@ -103,7 +103,7 @@ def info(ctx: typer.Context,
     results_dir = TyperUtils.get_default_report_dir()
     target_file = _choose_report_file(results_dir, filename)
     report = Report.from_yaml(target_file)
-    TyperUtils.display_report(report, True)
+    TyperUtils.report_display(report, True)
 
 @app.command(help=_("Archive old reports"),
              short_help=_("Archive old reports"))

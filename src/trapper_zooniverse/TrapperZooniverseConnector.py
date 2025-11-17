@@ -95,22 +95,37 @@ class TrapperZooniverseConnector:
 
         start_time = datetime.now().isoformat()
         self.logger.debug(f"Starting upload_collection at {start_time}")
+        self.logger.debug(f"Getting media for {classification_project} and collection {collection}...")
 
-        print(f"Getting media for {classification_project} and collection {collection}...")
+        if progress_callback:
+            progress_callback("getting_media", state="start",
+                              description=f"Getting media for classificacrin project {classification_project} and collection {collection}...")
+
         media:TrapperMediaList=self.trapper.media.get_by_collection(classification_project, collection)
+
+        if progress_callback:
+            progress_callback("getting_media", state="end")
 
         self.logger.debug(
             f"Obtained {len(media.results)} media from classification project {classification_project} and collection {collection}")
 
-        print(f"Getting observations from classification project  {classification_project} and collection {collection}")
-        observations:TrapperClassificationResultsList=(self.trapper.observations.results.get_by_collection(classification_project, collection))
+        if progress_callback:
+            progress_callback("getting_observations", state="start",
+                description=f"Getting observations from classification project {classification_project} and collection {collection}")
+
+        self.logger.debug(f"Getting observations from classification project  {classification_project} and collection {collection}")
+
+        observations: TrapperClassificationResultsList = (
+            self.trapper.observations.results.get_by_collection(classification_project, collection))
+
+        if progress_callback:
+            progress_callback("getting_observations", state="end")
+
         self.logger.debug(
             f"Obtained {len(observations.results)} observations from classification project  {classification_project} and collection {collection}")
 
         if progress_callback:
-            progress_callback("get_observations", len(observations.results))
-
-        print(f"Filtering classified observations...")
+            progress_callback("filtering_observations", state="start", description=f"Filtering classified observations...")
 
         filtered_observations = [
             obs for obs in observations.results
@@ -134,10 +149,14 @@ class TrapperZooniverseConnector:
             }
         )
 
+        if progress_callback:
+            progress_callback("filtering_observations", state="end")
+
         self.logger.debug(
             f"Obtained {len(observations.results)} observations after filtering from classification project  {classification_project} and collection {collection}")
 
-        print(f"Getting url for medias classified...")
+        if progress_callback:
+            progress_callback("getting_url", state="start", description=f"Getting url for medias classified...")
 
         media_map=self._merge_media_and_observations(media,observations)
 
@@ -147,12 +166,24 @@ class TrapperZooniverseConnector:
         if len(media_map.keys()) == 0:
             self.logger.debug(f"No valid observations found for collection {collection} and classification project {classification_project}.")
 
+        if progress_callback:
+            progress_callback("getting_url", state="end")
+
+        if progress_callback:
+            progress_callback("preparing_sequences", state="start", description=f"Preparing sequences...")
+
         self.logger.debug("Preparando las secuencias")
-        print(f"Preparing sequences..")
 
         sequences = self._generate_zoo_images_from_media_map(media_map, max_interval, n_images_seq)
 
-        print(f"Downloading images..")
+        if progress_callback:
+            progress_callback("preparing_sequences", state="end")
+
+        total = sum(len(sequence) for sequence in sequences)
+
+        if progress_callback:
+            progress_callback("download_images", state="start", description=f"Downloading {total} images...",
+                              total=total, set_total=True)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             for idx, seq in enumerate(sequences):
@@ -181,23 +212,42 @@ class TrapperZooniverseConnector:
                     self.logger.debug(
                         f"Descargando {media['mediaID']} ({media['filePath']}) a {local_path}")
 
+                    if progress_callback:
+                        progress_callback("download_images"
+                                          , state="running"
+                                          , advance=0
+                                          , item_name=media['mediaID']
+                                          , item_status="start")
+
                     try:
                         self._download_image(str(media['filePath']), local_path, attempts=5, delay_seconds=60)
                         origin = f"{self.trapper.base_url}:media:{media['mediaID']}"
                         metadata[name] = {"origin":origin}
                         report.add_success(f"{media['mediaID']}@media", "download",**{"path":local_path})
-                        import time
-                        import random
-                        time.sleep(random.uniform(1, 4))
+
+                        if progress_callback:
+                            progress_callback("download_images"
+                                              , state="running"
+                                              , advance=1
+                                              , item_name=media['mediaID']
+                                              , item_status="end")
+
                     except Exception as e:
                         self.logger.error(f"Failed to download {media['mediaID']}: {e}")
                         report.add_error(f"{media['mediaID']}@media",
                                           "download",
                                           str(e),
                                           **{"path":str(media['filePath'])})
-                    finally:
+
                         if progress_callback:
-                            progress_callback("download", 1)  # incrementa 1 unidad
+                            progress_callback("download_images"
+                                              , state="running"
+                                              , advance=1
+                                              , item_name=media['mediaID']
+                                              , item_status="fail")
+
+            if progress_callback:
+                progress_callback("download_images", state="end")
             # Subir a Zooniverse
             file_paths = [
                 os.path.join(temp_dir, f)
@@ -207,6 +257,23 @@ class TrapperZooniverseConnector:
             self.logger.debug(f"Creando SubjectSet {subjectset_name} en Zooniverse")
             subjectset = self.zoo.subjectsets.create(subjectset_name)
 
+            if progress_callback:
+                progress_callback("uploaded_images"
+                                  , state="start"
+                                  , description=f"Uploading {len(file_paths)} images to Zooniverse {subjectset}..."
+                                  , total=len(file_paths)
+                                  , set_total=True)
+
+            def create_subjects_progress_callback(filename, status, subject):
+                advance = 1 if status in ["end", "fail"] else 0
+
+                progress_callback("uploaded_images"
+                                  , state="running"
+                                  , advance=advance
+                                  , description=f"Uploading {len(file_paths)} images to Zooniverse {subjectset}..."
+                                  , item_name=filename
+                                  , item_status=status)
+
             ok, fail = self.zoo.subjects.create_bulk(
                 file_paths,
                 subjectset,
@@ -215,7 +282,11 @@ class TrapperZooniverseConnector:
                 delay,
                 max_attempts_per_subject,
                 delay_seconds_per_subject,
+                create_subjects_progress_callback
             )
+
+            if progress_callback:
+                progress_callback("uploaded_images", state="end")
 
             for success in ok:
                 import re

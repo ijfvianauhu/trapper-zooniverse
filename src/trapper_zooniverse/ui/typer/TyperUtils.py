@@ -275,7 +275,7 @@ class TyperUtils:
         return report_file
 
     @staticmethod
-    def print_reports_in_directory(results_dir: Path):
+    def reports_in_directory(results_dir: Path):
         """
         List all YAML upload reports saved in the default upload reports directory.
         Shows filename, report title, start/end time, and status.
@@ -336,7 +336,7 @@ class TyperUtils:
         TyperUtils.console.print(table)
 
     @staticmethod
-    def display_report2(report: "Report", raw: bool = False) -> None:
+    def report_display(report: "Report", raw: bool = False) -> None:
         """
         Displays a formatted summary of the Report instance in the console using Rich.
         """
@@ -410,38 +410,6 @@ class TyperUtils:
         # ✅ Status line
         # -----------------------------
         TyperUtils.console.rule(f"[bold cyan]Report Status: [white]{report.get_status().upper()}[/white]")
-
-    @staticmethod
-    def display_report(report: UploadReport):
-        """Muestra el informe formateado en consola con Rich."""
-        title = Text(f"📊 Upload Report: {report.subjectset_name}", style="bold cyan")
-        TyperUtils.console.rule(title)
-
-        table = Table(box=box.SIMPLE_HEAVY)
-        table.add_column("Metric", style="bold yellow")
-        table.add_column("Count", justify="right", style="bold white")
-
-        stats = {
-            "Uploaded images": len(report.uploaded_images),
-            "Failed uploads": len(report.failed_uploads),
-            "Skipped (human)": len(report.skipped_human),
-            "Skipped (private)": len(report.skipped_private),
-            "Downloaded": len(report.download_images),
-            "Download failed": len(report.download_failed),
-        }
-
-        for key, value in stats.items():
-            table.add_row(key, str(value))
-
-        TyperUtils.console.print(Panel.fit(
-            f"Start: [green]{report.start_time}[/green]\n"
-            f"End:   [green]{report.end_time}[/green]",
-            title="🕒 Timestamps",
-            border_style="cyan"
-        ))
-
-        TyperUtils.console.print(table)
-        TyperUtils.console.rule()
 
     @staticmethod
     def display_upload_annotations_report(report: UploadAnnotationsReport):
