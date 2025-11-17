@@ -1,0 +1,22 @@
+services:
+  trapper-zooniverse:
+    #build:
+    #  context: .
+    #  dockerfile: Dockerfile
+    #image: trapper-zooniverse:local
+    image: ghcr.io/ijfvianauhu/trapper-zooniverse/trapper-zooniverse:latest
+    container_name: trapper-zooniverse
+    restart: unless-stopped
+    volumes:
+      # Internal volume for settings persistence
+      - trapper_zooniverse_settings:/home/trapper/.config/trapper-zooniverse
+      # Mount for data directory (user-defined)
+      - ${DATA_PATH:-./trapper-zooniverse-data/}:/data
+    # user: "1000:1000"
+    env_file:
+      - .env
+    stdin_open: true
+    tty: true
+
+volumes:
+  trapper_zooniverse_settings:  # Named volume for settings persistence
