@@ -1,6 +1,7 @@
 import filecmp
 import logging
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -183,7 +184,6 @@ def test_zooniverse_client_subsets_create_download(zooniverse_client:ZooniverseC
             os.remove(downloaded_path)
             logging.info(f"Deleted downloaded file {downloaded_path}")
 
-
 def test_zooniverse_client__download_bulk_max_subjectset(zooniverse_client):
     """
     Test que descarga todos los subjects de un SubjectSet.
@@ -207,7 +207,7 @@ def test_zooniverse_client__download_bulk_max_subjectset(zooniverse_client):
     temp_dir = tempfile.mkdtemp(prefix="bulk_download_")
 
     try:
-        downloaded_files = zooniverse_client.subjects.download_bulk(max_ss.id, output_folder=Path(temp_dir))
+        downloaded_files = zooniverse_client.subjectsets.download_bulk(max_ss.id, output_folder=Path(temp_dir))
         logging.info(f"Descargados {len(downloaded_files)} archivos. en {temp_dir}")
 
         assert len(downloaded_files) == max_count, "No se descargaron todos los subjects."
@@ -225,7 +225,7 @@ def test_zooniverse_client__download_bulk_max_subjectset(zooniverse_client):
                 assert False, f"{f} no es una imagen válida o está corrupta"
     finally:
         # --- 7️⃣ Limpiar carpeta temporal ---
-        #if os.path.exists(download_folder):
-        #    shutil.rmtree(download_folder)
-        #    logging.info(f"Carpeta temporal {download_folder} eliminada.")
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            logging.info(f"Carpeta temporal {temp_dir} eliminada.")
         pass

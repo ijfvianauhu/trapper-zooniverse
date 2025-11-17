@@ -17,14 +17,11 @@ from trapper_client.Schemas import TrapperMediaList, TrapperObservationList, Pag
 from trapper_zooniverse.AnnotationsVoter import AnnotationsVoter
 from trapper_zooniverse.AnnotationsExtractor import AnnotationsExtractor
 from trapper_zooniverse.reports import Report
-from trapper_zooniverse.Schemas import UploadReport, SubjectSetResults, WorkflowData, UploadAnnotationsReport, \
-    Zoo2TrapperObservation, UploadMediaReport
+from trapper_zooniverse.Schemas import SubjectSetResults, WorkflowData, Zoo2TrapperObservation
 
 import urllib
 
 from trapper_zooniverse.ZooniverseClient import ZooniverseClient
-from trapper_zooniverse.ui.typer.TyperUtils import TyperUtils
-
 
 class MediaObservationEntry(BaseModel):
     filePath: HttpUrl
@@ -316,7 +313,7 @@ class TrapperZooniverseConnector:
             observation_map: Path = None,
             species_map: Path = None,
     ):
-        report = UploadAnnotationsReport(str(subjectset_id))
+        report = Report(f"Annotation from  {subjectset_id} to  classification project {cp_id}", type="DownloadAnnotations" )
 
         self.zoo.connect()
 
@@ -343,27 +340,19 @@ class TrapperZooniverseConnector:
         self.logger.debug(
             f"Obtained {len(observations.results)} observations for collection {collection_id} and research project {cp_id}")
 
-        (extrator, voter) = self._get_extrator_vote(wf.id)
-
-        #indices = random.sample(range(len(observations.results)), len(observations.results))
+        (extractor, voter) = self._get_extrator_vote(wf.id)
 
         flat_results : List[TrapperObservationResultsTrapper]= []
 
+        # for each subject-media annotation, extract observations and vote
         for key, value in annotations.data.items():
             try:
                 self.logger.debug(f"Procesando observaciones para el subject-media {key}")
                 subject_id, media_id = key.split(":")
 
-                # Fake code begins
-                #n = random.randint(0, min(3, len(indices)))
-                #removed = indices[:n]
-                #indices = indices[n:]
-                #all_media_observations = [observations.results[i] for i in removed]
-                ### Fake code end
-
                 all_media_observations: List[TrapperObservationResultsTrapper] = [o for o in observations.results if str(o.mediaID) == media_id]
 
-                opinions = extrator.run(value)
+                opinions = extractor.run(value)
 
                 if len(all_media_observations) == 0:
                     self.logger.debug(f"No encontrado {media_id} en observaciones")
