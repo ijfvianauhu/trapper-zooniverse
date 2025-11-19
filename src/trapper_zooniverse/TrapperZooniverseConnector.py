@@ -1,13 +1,10 @@
 from collections import defaultdict
 from datetime import datetime, time, timezone
-import random
 from pathlib import Path
 from typing import List, Dict, Tuple, Any, Optional, Callable
 import logging, os
 import tempfile
 
-from panoptes_client import Project, SubjectSet
-from panoptes_client.panoptes import Panoptes
 from pydantic import BaseModel, validator, HttpUrl
 from trapper_client import Schemas
 from trapper_client.TrapperClient import TrapperClient
@@ -48,7 +45,6 @@ class MediaObservationEntry(BaseModel):
             # opcional: lanzar error o devolver None si no se puede parsear
             return None
 
-
 class TrapperZooniverseConnector:
     """
     Clase para subir imágenes a Zooniverse y obtener resultados de un SubjectSet.
@@ -85,7 +81,8 @@ class TrapperZooniverseConnector:
             delay=15,
             max_attempts_per_subject=5,
             delay_seconds_per_subject=30,
-            progress_callback: Optional[Callable[[str, int], None]] = None  # <--- callback
+            progress_callback: Optional[Callable[[str, int], None]] = None, # <--- callback
+            max_workers=8
     ) -> Report:
         report = Report(f"Collection {collection} from {self.trapper.base_url}", type="UploadMediaReport" )
         metadata = {}

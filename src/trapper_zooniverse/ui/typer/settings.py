@@ -34,7 +34,43 @@ from dynaconf import Dynaconf
 from dynaconf import loaders
 from dynaconf.validator import Validator
 
+from pydantic import BaseModel, Field, HttpUrl, EmailStr
+from typing import Optional
+
 logger = logging.getLogger(__name__)
+
+class LoggerSettings(BaseModel):
+    loglevel: int = Field(ge=0, le=2)
+    filename: str = Field(
+        default="",
+        description="Empty string or string ending in .log",
+        pattern=r"(^$|^.*\.log$)",
+    )
+
+class TrapperSettings(BaseModel):
+    trapper_username: EmailStr
+    trapper_password: str
+    trapper_url: HttpUrl
+    trapper_token: Optional[str] = None
+
+class ZooniverseSettings(BaseModel):
+    zooniverse_username: str
+    zooniverse_password: str
+    zooniverse_project_id: str
+
+class ZooniverseConnectorSettings(BaseModel):
+    upload_collection_n_images_seq: int
+    upload_collection_max_interval: int
+    upload_collection_attempts: int
+    upload_collection_delay: int
+    upload_collection_max_attempts_per_subject: int
+    upload_collection_delay_seconds_per_subject: int
+
+class Settings(BaseModel):
+    LOGGER: LoggerSettings
+    TRAPPER: TrapperSettings
+    ZOONIVERSE: ZooniverseSettings
+    ZOONIVERSE_CONNECTOR: ZooniverseConnectorSettings
 
 SETTINGS_ORDER = {
     "LOGGER": ["loglevel", "filename"],
@@ -74,7 +110,7 @@ class SettingsManager:
         :type settings_dir: Optional[Path]
         """
 
-        self.settings_dir = (
+        self.settings_dir : Path = (
             Path(settings_dir) if settings_dir else Path.home() / ".trapper-zooniverse"
         )
         self.settings_dir.mkdir(parents=True, exist_ok=True)
@@ -176,6 +212,36 @@ class SettingsManager:
             settings.validators.validate()
 
         return settings
+
+    def load_settings_pydantic(
+        self,
+        project_name: str,
+        validate: bool = True,
+        create: bool = True,
+    ) -> Settings:
+        """
+        Load settings into a Pydantic Settings object.
+
+        This wraps `load_settings()` (Dynaconf) but returns a strongly typed
+        Pydantic model with full validation and autocompletion.
+
+        :param project_name: Name of the project.
+        :param validate: Whether to validate using Pydantic.
+        :param create: Automatically create settings if missing.
+        :return: A Pydantic `Settings` model instance.
+        """
+        dynaconf_settings = self.load_settings(
+            project_name,
+            validate=False,     # Let pydantic validate below
+            create=create
+        )
+
+        data = dynaconf_settings.to_dict()
+
+        # Validate & build pydantic model
+        settings_model = Settings(**data) if validate else Settings.model_validate(data)
+
+        return settings_model
 
     def list_projects(self) -> list[str]:
         """

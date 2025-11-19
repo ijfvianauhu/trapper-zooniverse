@@ -1,27 +1,21 @@
 import os
+import tempfile
 import time
 import logging
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
-from threading import Thread
 from typing import List, Tuple, Optional, Union, Dict
 import json
-import panoptes_client as pc
 import requests
 from panoptes_client import SubjectSet, Subject, Project, Workflow, ProjectRole, User, Classification, Panoptes
 from trapper_zooniverse.Schemas import SubjectSetResults
 from pathlib import PurePath
-
 from trapper_zooniverse.i18n import setup_i18n, _
-
-import logging
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import panoptes_client as pc
-from panoptes_client import Project, SubjectSet, Workflow, User, ProjectRole
-
-from trapper_zooniverse.ui.typer.TyperUtils import TyperUtils
-
+from trapper_zooniverse.reports import Report
 
 class ZooniverseClientComponent:
     """Clase base para componentes del cliente de Zooniverse (Workflows, Subjects, etc.)."""
@@ -246,7 +240,7 @@ class SubjectSetsComponent(ZooniverseClientComponent):
         for ss in subject_sets:
             # Check if classifications export exists
             try:
-                export = ss.get_export("classifications", wait=False)  # don't wait for generation
+                ss.get_export("classifications", wait=False)  # don't wait for generation
                 selected.append(ss)
             except Exception as e:
                 pass
@@ -257,45 +251,61 @@ class SubjectSetsComponent(ZooniverseClientComponent):
         return self.with_results()
 
     def download(self, subject_set_id: int, output_folder: Path,
-                 callback: callable = None, max_workers: int = 8,
-                 event_queue: Queue = None) -> list[str]:
+                 callback: callable = None, max_workers: int = 8) -> Report:
 
         self.client._ensure_connection()
+        self.client.logger.debug(f"Starting SubjectSet  {subject_set_id} download.")
 
+        report: Report = Report(
+            f"Bulk Download Report for subjectset {subject_set_id}, project {self.client.project_id}"
+        )
+
+        self.client.logger.debug(f"Creating  output folder...")
+        output_folder.mkdir(parents=True, exist_ok=True)
         subject_set = SubjectSet.find(subject_set_id)
-        if not subject_set or not subject_set.subjects:
-            return []
+        if not subject_set:
+            self.client.logger.warning(f"SubjectSet with ID {subject_set_id} not found.")
+            raise ValueError(f"SubjectSet with ID {subject_set_id} not found.")
+        self.client.logger.debug(f"Obtained info for  SubjectSet  {subject_set_id}")
 
-        downloaded_files = []
+        if not subject_set.subjects:
+            self.client.logger.warning(f"SubjectSet {subject_set_id} no contiene subjects.")
+            report.finish()
+            return report
+
+        def _notify(event: str, sid: int, info):
+            if callback:
+                try:
+                    callback(event, sid, info)
+                except Exception:
+                    self.client.logger.debug("Callback raised an exception", exc_info=True)
 
         def download_one(subj):
-            """Descarga un subject y devuelve su nombre."""
+            sid = getattr(subj, "id", None)
+            name = getattr(subj, "display_name", getattr(subj, "name", f"subject_{sid}"))
+            self.client.logger.debug(f"Sending start notification for subjet {subj}")
+            _notify("start", sid, name)
             try:
-                name = getattr(subj, "name", f"subject_{subj.id}")
-
-                if callback:
-                    callback("start", subj.id, name)
-
                 s_cmp = SubjectsComponent(self.client)
-                s_cmp.download(subj.id, save_path=str(output_folder))
-
-                if callback:
-                    callback("end", subj.id, name)
-
-                return name
-
-            except Exception as e:
-                if callback:
-                    callback("fail", subj.id, None)
+                path = s_cmp.download(sid, save_path=str(output_folder))
+                report.add_success(sid, "download", str(path))
+                self.client.logger.debug(f"Sending end notification for subjet  {subj}")
+                _notify("end", sid, str(path))
+                return sid
+            except Exception as exc:
+                report.add_error(sid, "download", str(exc))
+                self.client.logger.debug(f"Sending fail notification for subjet {subj}: {str(exc)}")
+                _notify("fail", sid, str(exc))
+                self.client.logger.warning(f"Error downloading subject {sid}: {exc}")
                 return None
 
+        self.client.logger.debug(f"Preparing pool for {max_workers} workers and {subject_set.subjects} subjects")
+
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            for name in pool.map(download_one, subject_set.subjects):
-                if name:
-                    downloaded_files.append(name)
+            for _ in pool.map(download_one, subject_set.subjects):
+               pass
 
-        return downloaded_files
-
+        return report
 #
 # SubjectsComponent
 #
@@ -446,142 +456,82 @@ class SubjectsComponent(ZooniverseClientComponent):
 
         return (all_subjects, failed_files)
 
-    def download(self, subject_id: int, save_path: str = None, max_retries: int = 3, delay_seconds:int =5) -> str:
+    def download(self, subject_id: int, save_path: str = None, max_retries: int = 3, delay_seconds: int = 5) -> str:
         """
-        Descarga la imagen principal de un Subject de Zooniverse.
-
-        Args:
-            subject_id (int): ID del Subject a descargar.
-            save_path (str, optional): Ruta completa donde guardar la imagen.
-                                       Si no se proporciona, se guarda en el directorio actual con el nombre original.
-
-        Returns:
-            str: Ruta local donde se guardó la imagen.
-
-        Raises:
-            ValueError: Si no se encuentra el Subject o no tiene imagen.
-            Exception: Si ocurre un error durante la descarga.
+        Descarga la imagen principal de un Subject de Zooniverse usando tenacity para reintentos.
         """
         self.client._ensure_connection()
-
         self.client.logger.debug(f"Downloading subject: {subject_id}")
 
-        try:
-            subject = Subject.find(subject_id)
-            if not subject:
-                raise ValueError(f"Subject con ID {subject_id} no encontrado.")
+        # recuperar subject y URL de imagen (como en la versión original)
+        subject = Subject.find(subject_id)
+        if not subject:
+            raise ValueError(f"Subject con ID {subject_id} no encontrado.")
 
-            locations = subject.locations
-            if not locations or not isinstance(locations, list):
-                raise ValueError(f"Subject {subject_id} no tiene imágenes asociadas.")
+        locations = subject.locations
+        if not locations or not isinstance(locations, list):
+            raise ValueError(f"Subject {subject_id} no tiene imágenes asociadas.")
 
-            image_url = locations[0].get("image/png") or locations[0].get("image/jpg") or locations[0].get("image/jpeg")
-            if not image_url:
-                raise ValueError(f"Subject {subject_id} no tiene URL válida para la imagen.")
+        image_url = locations[0].get("image/png") or locations[0].get("image/jpg") or locations[0].get("image/jpeg")
+        if not image_url:
+            raise ValueError(f"Subject {subject_id} no tiene URL válida para la imagen.")
 
-            # Obtener nombre del archivo desde los metadatos
-            metadata = subject.metadata or {}
-            name_candidates = ["Filename", "filename", "file_name", "name", "display_name"]
-            original_filename = None
-            for k in name_candidates:
-                if k in metadata:
-                    original_filename = str(metadata[k])
-                    break
+        metadata = subject.metadata or {}
+        name_candidates = ["Filename", "filename", "file_name", "name", "display_name"]
+        original_filename = None
+        for k in name_candidates:
+            if k in metadata:
+                original_filename = str(metadata[k])
+                break
 
-            if not original_filename:
-                original_filename = os.path.basename(image_url)
+        if not original_filename:
+            original_filename = os.path.basename(image_url)
+        else:
+            original_filename = str(PurePath(original_filename).name)
+
+        self.client.logger.debug(f"Original filename: {original_filename}")
+
+        # Resolver ruta destino
+        if save_path is None:
+            filename = f"{subject_id}_{original_filename}"
+            target_path = Path(os.getcwd()) / filename
+        else:
+            target = Path(save_path)
+            if target.is_dir():
+                filename = f"{subject_id}_{original_filename}"
+                target_path = target / filename
             else:
-                original_filename = str(PurePath(original_filename).name)
+                target_path = target
 
-            self.client.logger.debug(f"Original filename: {original_filename}")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
 
-            if save_path is None:
-                filename = f"{subject_id}_{original_filename}"
-                save_path = os.path.join(os.getcwd(), filename)
-            elif os.path.isdir(save_path):
-                filename = f"{subject_id}_{original_filename}"
-                save_path = os.path.join(save_path, filename)
+        @retry(
+            stop=stop_after_attempt(max_retries),
+            wait=wait_exponential(multiplier=delay_seconds, min=delay_seconds, max=delay_seconds * 16),
+            retry=retry_if_exception_type(requests.RequestException),
+            reraise=True,
+        )
+        def _fetch(url: str, timeout: int = 10) -> requests.Response:
+            resp = requests.get(url, stream=True, timeout=timeout)
+            resp.raise_for_status()
+            return resp
 
-            for attempt in range(1, max_retries + 1):
-                try:
-                    response = requests.get(image_url, stream=True, timeout=10)
-                    response.raise_for_status()
+        try:
+            resp = _fetch(image_url, timeout=10)
 
-                    with open(save_path, "wb") as f:
-                        for chunk in response.iter_content(1024):
-                            f.write(chunk)
+            # escribir en fichero temporal dentro del mismo directorio y mover atómicamente
+            with tempfile.NamedTemporaryFile(delete=False, dir=str(target_path.parent)) as tmpf:
+                tmp_name = tmpf.name
+                for chunk in resp.iter_content(8192):
+                    if chunk:
+                        tmpf.write(chunk)
 
-                    return save_path # éxito → salir
+            os.replace(tmp_name, str(target_path))
+            return str(target_path)
 
-                except Exception as err:
-                    if attempt == max_retries:
-                        raise Exception(
-                            f"No se pudo descargar la imagen tras {max_retries} intentos: {err}"
-                        )
-
-                    wait_time = delay_seconds * (2 ** (attempt - 1))
-
-                    self.client.logger.warning(
-                        f"Error downloading subject (attempt {attempt}/{max_retries}). "
-                        f"Retry in  {wait_time} seconds..."
-                    )
-                    time.sleep(wait_time)
-                    attempt += 1
-
-        except Exception as e:
-            raise e
-
-    def download_bulk(self, subject_set_id: int, output_folder: Path, callback: callable = None
-) -> list[str]:
-        """
-        Descarga todas las imágenes de un SubjectSet a un directorio local usando el método `download`.
-
-        Args:
-            subject_set_id (int): ID del SubjectSet.
-            output_folder (Path): Carpeta donde se guardarán las imágenes.
-            callback (callable, optional): Función que se llama antes y después de cada descarga.
-            Debe aceptar dos parámetros: subject_id (int) y status (str), donde status es 'start', 'end' o 'fail'.
-            También puede recibir el path de la imagen descargada en 'end'.
-        Returns:
-            list[str]: Lista con las rutas locales de las imágenes descargadas.
-
-        Raises:
-            ValueError: Si no se encuentra el SubjectSet o no tiene subjects.
-        """
-        self.client._ensure_connection()
-
-        self.client.logger.debug(f"Downloading subjectset: {subject_set_id}")
-
-        output_folder.mkdir(parents=True, exist_ok=True)
-
-        subject_set = SubjectSet.find(subject_set_id)
-        if not subject_set:
-            self.client.logger.warning(f"SubjectSet with ID {subject_set_id} not found.")
-            raise ValueError(f"SubjectSet with ID {subject_set_id} not found.")
-
-        #subjects = list(subject_set.subjects)
-        if not subject_set.subjects:
-            logging.warning(f"SubjectSet {subject_set_id} no contiene subjects.")
-            return []
-
-        downloaded_files = []
-
-        for subj in subject_set.subjects:
-            try:
-                if callback:
-                    callback(subj.id, 'start', None)  # Antes de empezar
-
-                path = self.download(subj.id, save_path=str(output_folder))
-                downloaded_files.append(path)
-                if callback:
-                    callback(subj.id, 'end', path)  # Al terminar
-            except Exception as e:
-                if callback:
-                    callback(subj.id, 'fail', None)  #
-                self.client.logger.warning(f"Error downloading subject {subj.id}: {e}")
-                self.client.logger.warning(f"Error downloading subject {subj.id}: {e}")
-
-        return downloaded_files
+        except Exception as err:
+            # tenacity ya re-lanzará la última excepción si agota intentos
+            raise Exception(f"No se pudo descargar la imagen tras {max_retries} intentos: {err}")
 
 # AnnotationsComponent
 #

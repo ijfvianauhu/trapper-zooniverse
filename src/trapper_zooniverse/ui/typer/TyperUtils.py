@@ -1,24 +1,18 @@
 import json
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path, PosixPath
-from typing import Union, List, Optional, Dict, Any, Callable, Tuple
-
-from rich.markdown import Markdown
-from rich.syntax import Syntax
-from rich.tree import Tree
-
-from trapper_zooniverse.Schemas import UploadReport, UploadAnnotationsReport
+from typing import Union, List, Optional, Dict, Any, Callable
 from rich.table import Table
 from rich.console import Console
 from rich.prompt import Prompt
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn, BarColumn, ProgressColumn, TaskID
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn, BarColumn, ProgressColumn, TaskID, \
+    TimeRemainingColumn
 from rich.panel import Panel
 from rich.text import Text
 from rich import box
-from typing import List
-from panoptes_client import Subject, SubjectSet, Classification
 import logging
 import typer
 from pydantic import BaseModel, HttpUrl
@@ -26,7 +20,9 @@ from dataclasses import asdict
 import yaml
 
 from trapper_zooniverse.i18n import _
+from trapper_zooniverse.reports import Report
 from trapper_zooniverse.ui.typer.ConfigManager import AppConfig
+from trapper_zooniverse.ui.typer.settings import Settings
 
 
 class TyperUtils:
@@ -61,6 +57,12 @@ class TyperUtils:
         TyperUtils.logger.info(message)
 
     @staticmethod
+    def debug(message: str):
+        if TyperUtils.logger.isEnabledFor(logging.DEBUG):
+            TyperUtils.console.print(f"🐞 {message}")
+        TyperUtils.logger.info(message)
+
+    @staticmethod
     def validate_yaml_file(path: Path):
         import yaml
         try:
@@ -73,7 +75,7 @@ class TyperUtils:
             raise ValueError((f"YAML file '{str(Path)}' not found."))
 
     @staticmethod
-    def display_config_table(config: AppConfig, title: str = "Config") -> None:
+    def display_config_table(config: Settings, title: str = "Config") -> None:
         console = Console()
         table = Table(title=title, show_lines=False)
         table.add_column("Section", style="cyan", no_wrap=True)
@@ -258,7 +260,6 @@ class TyperUtils:
     # Report methods
     #
 
-
     @staticmethod
     def get_default_report_dir():
         return Path(TyperUtils.home) / ("reports")
@@ -412,117 +413,6 @@ class TyperUtils:
         TyperUtils.console.rule(f"[bold cyan]Report Status: [white]{report.get_status().upper()}[/white]")
 
     @staticmethod
-    def display_upload_annotations_report(report: UploadAnnotationsReport):
-        """
-        ## display_upload_annotations_report
-
-        Displays a formatted summary of an **UploadAnnotationsReport** in the console using Rich.
-
-        ### 🧩 Behavior
-        - Prints a header with the subject set name.
-        - Displays general statistics (number of failed and successful annotations).
-        - Shows start and end timestamps.
-        - Prints up to **10 first subjects with errors** and **10 with successes**,
-          each as a Rich table (`Subject` → `Messages`).
-          - Each key is a subject ID.
-          - Each value is a list of error or success messages.
-
-        ### ⚙️ Parameters
-        - `report` (`UploadAnnotationsReport`):
-          A Pydantic model containing:
-          - `subjectset_name`
-          - `start_time`, `end_time`
-          - `errors`: dict[str, list[str]] — mapping subjects to error messages
-          - `successes`: dict[str, list[str]] — mapping subjects to success messages
-        """
-
-        title = Text(f"📊 Upload Annotations Report: {report.subjectset_name}", style="bold cyan")
-        TyperUtils.console.rule(title)
-
-        # --- Summary table ---
-        summary = Table(box=box.SIMPLE_HEAVY)
-        summary.add_column("Metric", style="bold yellow")
-        summary.add_column("Count", justify="right", style="bold white")
-
-        stats = {
-            "Failed annotations": len(report.errors),
-            "Successful annotations": len(report.successes),
-        }
-
-        for key, value in stats.items():
-            summary.add_row(key, str(value))
-
-        TyperUtils.console.print(Panel.fit(
-            f"Start: [green]{report.start_time}[/green]\n"
-            f"End:   [green]{report.end_time}[/green]",
-            title="🕒 Timestamps",
-            border_style="cyan"
-        ))
-
-        TyperUtils.console.print(summary)
-
-        # --- Helper to render dict[subject, list[str]] as a table ---
-        def format_dict_table(entries, color, title):
-            """Formats up to 10 dict entries as a Rich table (Subject → Messages)."""
-            if not entries:
-                return None
-
-            table = Table(title=title, box=box.MINIMAL_DOUBLE_HEAD, border_style=color)
-            table.add_column("Subject", style=f"bold {color}", no_wrap=True)
-            table.add_column("Messages", style=color)
-
-            # Limit to first 10 subjects
-            for i, (subject, messages) in enumerate(entries.items()):
-                if i >= 10:
-                    table.add_row("[bright_black]...and more[/bright_black]", "")
-                    break
-                # Limit each subject to first 3 messages for compactness
-                msg_preview = "\n".join(messages[:3])
-                if len(messages) > 3:
-                    msg_preview += f"\n[bright_black]...and {len(messages) - 3} more[/bright_black]"
-                table.add_row(subject, msg_preview)
-
-            return table
-
-        # --- Display first 10 errors ---
-        error_table = format_dict_table(report.errors, "red", "❌ First Errors")
-        if error_table:
-            TyperUtils.console.print(error_table)
-
-        # --- Display first 10 successes ---
-        success_table = format_dict_table(report.successes, "green", "✅ First Successes")
-        if success_table:
-            TyperUtils.console.print(success_table)
-
-        TyperUtils.console.rule()
-
-    @staticmethod
-    def save_yaml(report: UploadReport, filename: PosixPath = None):
-        """Guarda el informe en un archivo YAML."""
-        if not filename:
-            timestamp = report.start_time.replace(":", "-").replace("T", "_")
-            filename = f"upload_report_{timestamp}.yaml"
-
-        data = asdict(report)
-        for k, v in data.items():
-            if isinstance(v, (PosixPath, Path)):
-                data[k] = str(v)
-            elif isinstance(v, HttpUrl):
-                data[k] = str(v)
-
-        with open(filename, "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
-            #yaml.safe_dump(asdict(report), f, sort_keys=False, allow_unicode=True)
-
-    @staticmethod
-    def load_yaml(filename: PosixPath):
-        """Carga un informe desde un archivo YAML."""
-        with open(filename, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-
-        return UploadReport(**data)
-
-    @staticmethod
     def json2Table(
             data: Union[BaseModel, List[dict]],
             columns: Optional[List[str]] = None,
@@ -572,3 +462,347 @@ class TyperUtils:
         TyperUtils.console.print(
             f"[dim]Available fields:[/dim] [cyan]{', '.join(available_fields)}[/cyan]"
         )
+
+    @staticmethod
+    def progress_bar(func,  func_args: tuple, func_kwargs: dict = None, title: str = "Processing", total=0,
+                     max_workers=4) -> Report:
+        """
+        Display a Rich progress bar while executing a background function and processing
+        events sent via a callback through an internal queue.
+
+        :param func: Callable executed in the background. It must accept positional arguments
+                     from ``func_args`` and then receive a ``callback`` with signature
+                     ``callback(status, subject_id, name)`` and the integer ``max_workers``
+                     if the implementation requires it.
+        :type func: Callable
+
+        :param func_args: Tuple of positional arguments to pass to ``func`` before appending
+                          the ``callback`` and ``max_workers``.
+        :type func_args: tuple
+
+        :param func_kwargs: Optional dictionary of keyword arguments to pass to ``func``.
+        :type func_kwargs: dict | None
+
+        :param title: Description text shown for the task in the progress bar.
+        :type title: str
+
+        :param total: Expected total number of items. Use ``None`` or ``0`` when unknown to
+                      operate in indeterminate mode (the bar advances according to received events).
+        :type total: int | None
+
+        :param max_workers: Maximum number of worker threads the operation may use; this
+                            value is appended to the arguments passed to ``func``.
+        :type max_workers: int
+
+        :returns: The ``Report`` instance returned by ``func`` when execution completes successfully,
+                  or ``None`` if the background task failed or returned nothing.
+        :rtype: Report | None
+
+        :raises typer.Exit: On critical failures the function calls ``TyperUtils.fatal`` which
+                            raises ``typer.Exit`` with a non-zero exit code.
+        :raises Exception: Exceptions raised by ``func`` may be propagated or converted into
+                           a fatal error.
+
+        .. note::
+           The provided ``callback`` must enqueue tuples of the form ``(status, subject_id, name)``
+           into the internal ``Queue`` that the progress loop consumes. Recognized status values:
+
+           - ``'start'`` — item processing started.
+           - ``'end'``   — item processed successfully (increments progress).
+           - ``'fail'``  — item processing failed.
+           - ``'done'``  — optional sentinel to signal immediate completion.
+
+        .. rubric:: Internal behaviour
+           The function creates an internal :class:`queue.Queue` and runs ``func`` inside a
+           :class:`concurrent.futures.ThreadPoolExecutor`. The main thread consumes queue events,
+           updates :class:`rich.progress.Progress`, logs messages via :class:`TyperUtils` and, after
+           the queue has been drained and the background future completes, returns the background
+           ``Report`` (obtained via ``future.result()``).
+        """
+
+        from queue import Queue, Empty
+
+        report: Report = None
+        event_queue = Queue()
+
+        def callback(status, subject_id, name):
+            event_queue.put((status, subject_id, name))
+
+        with Progress(
+            "[progress.description]{task.description}",
+            BarColumn(),
+            "[progress.percentage]{task.percentage:>3.0f}%",
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            transient=False,
+        ) as progress:
+            task = progress.add_task(_(f"[cyan]{title}..."), total=total)
+
+            TyperUtils.debug("Preparing thread pool for collecting events...")
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                TyperUtils.debug("Submitting thread for zooniverse_client.subjectsets.download...")
+                if func_kwargs is None:
+                    func_kwargs = {}
+                final_args = func_args + (callback, max_workers)
+
+                future = executor.submit(
+                    func,
+                    *final_args,
+                    **func_kwargs,
+                )
+
+                completed = 0
+
+                while True:
+                    try:
+                        TyperUtils.debug("Trying get events...")
+                        status, subject_id, name = event_queue.get(timeout=0.1)
+                    except Empty:
+                        TyperUtils.debug("Queue empty")
+                        # si conocemos total, y future está done pero cola puede recibir más,
+                        # no rompas solo porque queue.empty() sea True (condición de carrera).
+                        if future.done() and total is None and event_queue.empty():
+                            TyperUtils.debug("Exiting loop because future is done and queue is empty")
+                            break
+                        continue
+
+                    TyperUtils.debug("Processing event...")
+                    if status == "start":
+                        progress.log(_(f"[yellow]→ Starting {subject_id}"))
+                    elif status == "end":
+                        completed += 1
+                        progress.advance(task, 1)
+                        progress.log(_(f"[green]✓ Finished {subject_id}"))
+                    elif status == "fail":
+                        completed += 1
+                        progress.log(_(f"[red]✗ Failed {subject_id}"))
+                    elif status == "done":
+                        # si la API emite un sentinel opcional, podemos usarlo para romper inmediatamente
+                        break
+
+                    # Si conocemos total, terminamos cuando hayamos recibido todos los eventos esperados.
+                    if total is not None and completed >= total:
+                        TyperUtils.debug(f"Completed all expected events {completed}/{total}.")
+                        progress.update(task, completed=total)
+                        TyperUtils.debug(f"Cleaning events queue...")
+                        # consumir rápidamente cualquier resto (logs) sin bloquear demasiado
+                        while not event_queue.empty():
+                            try:
+                                st = event_queue.get_nowait()
+                                # opcional: procesar logs/errores adicionales si se necesita
+                            except Empty:
+                                break
+                        break
+
+                # Si no teníamos total y el future terminó, esperar a que la cola se vacíe definitivamente
+                if total is None:
+                    while not event_queue.empty():
+                        try:
+                            status, subject_id, name = event_queue.get_nowait()
+                            if status == "end":
+                                progress.advance(task, 1)
+                            elif status == "fail":
+                                progress.advance(task, 1)
+                        except Empty:
+                            break
+                # Aquí se recupera siempre el resultado devuelto por la hebra
+                try:
+                    report = future.result(timeout=None)  # devuelve el Report o lanza excepción si falló
+                except Exception as exc:
+                    TyperUtils.fatal(_(f"Error executing {title}: {exc}"))
+
+        return report
+
+
+# python
+def progress_bar_dynamic(func, func_args: tuple, func_kwargs: dict = None, title: str = "Processing",
+                         max_workers: int = 4) -> Report:
+    """
+    Barra de progreso dinámica: crea/actualiza tareas cuando se reciben eventos.
+
+    Eventos esperados (diccionario) - ejemplos:
+      - Crear/actualizar tarea:
+        {
+          "type": "task",
+          "task_name": "download_images",
+          "description": "Downloading images",
+          "total": 42,               # int | None
+          "state": "started"         # started | finished | failed | updated
+        }
+      - Evento de ítem dentro de una tarea:
+        {
+          "type": "item",
+          "task_name": "download_images",
+          "item_name": "img_001.jpg",
+          "item_state": "end",       # end | fail | start | message
+          "item_message": "ok"       # texto opcional
+        }
+
+    El `func` debe aceptar los argumentos de `func_args` y recibir un `callback(event)` al final
+    que encole los eventos descritos. La función ejecuta `func` en un ThreadPoolExecutor,
+    consume la cola, crea tareas dinámicamente y devuelve el `Report` devuelto por `func`.
+    """
+
+    from queue import Queue, Empty
+    from concurrent.futures import ThreadPoolExecutor
+
+    report: Report = None
+    event_queue = Queue()
+
+    def callback(event):
+        try:
+            if event_queue is None:
+                TyperUtils.error("event_queue is None — events will be lost")
+                return
+            event_queue.put(event, timeout=1)
+        except Exception as e:
+            TyperUtils.error(f"Failed to enqueue event: {e}")
+
+    # mappings: task_name -> {"task_id": TaskID, "total": int|None, "completed": int}
+    tasks = {}
+
+    # Progress columns: si una tarea tiene total None se mostrará sin porcentaje
+    with Progress(
+        "[progress.description]{task.description}",
+        BarColumn(),
+        "[progress.percentage]{task.percentage:>3.0f}%",
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        transient=False,
+        console=TyperUtils.console
+    ) as progress:
+
+        main_task = progress.add_task(_(f"[cyan]{title}..."), total=None)
+
+        if func_kwargs is None:
+            func_kwargs = {}
+        final_args = func_args + (callback, max_workers)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(func, *final_args, **func_kwargs)
+
+            while True:
+                try:
+                    event = event_queue.get(timeout=0.1)
+                except Empty:
+                    # terminar si el trabajo de fondo terminó y no hay eventos pendientes
+                    if future.done() and event_queue.empty():
+                        TyperUtils.debug("Future done and queue empty -> breaking event loop")
+                        break
+                    continue
+
+                # Normalizar evento (acepta dict o tupla)
+                if isinstance(event, dict):
+                    ev = event
+                elif isinstance(event, (list, tuple)):
+                    # permitir tuplas estilo: ("task", task_name, description, total, state)
+                    try:
+                        if len(event) >= 1 and event[0] in ("task", "item"):
+                            if event[0] == "task":
+                                ev = {
+                                    "type": "task",
+                                    "task_name": event[1],
+                                    "description": event[2] if len(event) > 2 else None,
+                                    "total": event[3] if len(event) > 3 else None,
+                                    "state": event[4] if len(event) > 4 else None
+                                }
+                            else:
+                                ev = {
+                                    "type": "item",
+                                    "task_name": event[1],
+                                    "item_name": event[2] if len(event) > 2 else None,
+                                    "item_state": event[3] if len(event) > 3 else None,
+                                    "item_message": event[4] if len(event) > 4 else None
+                                }
+                        else:
+                            TyperUtils.debug(f"Ignoring unknown tuple event: {event}")
+                            continue
+                    except Exception:
+                        TyperUtils.debug(f"Malformed tuple event: {event}")
+                        continue
+                else:
+                    TyperUtils.debug(f"Ignoring unsupported event type: {type(event)}")
+                    continue
+
+                etype = ev.get("type")
+                tname = ev.get("task_name")
+                # Crear tarea si no existe
+                if etype == "task":
+                    desc = ev.get("description") or tname
+                    total = ev.get("total")
+                    state = ev.get("state")
+                    if tname not in tasks:
+                        task_total = total if (isinstance(total, int) and total > 0) else None
+                        task_id = progress.add_task(f"[cyan]{desc}", total=task_total)
+                        tasks[tname] = {"task_id": task_id, "total": task_total, "completed": 0, "description": desc}
+                        TyperUtils.info(f"Created task '{tname}' (total={task_total})")
+                    else:
+                        # actualización de metadatos de tarea
+                        meta = tasks[tname]
+                        if total is not None and total != meta["total"]:
+                            progress.update(meta["task_id"], total=total)
+                            meta["total"] = total
+                        if desc and desc != meta["description"]:
+                            progress.update(meta["task_id"], description=f"[cyan]{desc}")
+                            meta["description"] = desc
+
+                    if state in ("finished", "done"):
+                        meta = tasks.get(tname)
+                        if meta and meta["total"] is not None:
+                            # marcar completado por completo
+                            progress.update(meta["task_id"], completed=meta["total"])
+                        TyperUtils.success(f"Task '{tname}' finished")
+                    elif state in ("failed", "error"):
+                        TyperUtils.error(f"Task '{tname}' failed")
+
+                elif etype == "item":
+                    item_name = ev.get("item_name")
+                    item_state = ev.get("item_state")
+                    item_message = ev.get("item_message")
+                    if tname not in tasks:
+                        # crear tarea implícita sin total conocido
+                        task_id = progress.add_task(f"[cyan]{tname}", total=None)
+                        tasks[tname] = {"task_id": task_id, "total": None, "completed": 0, "description": tname}
+                        TyperUtils.info(f"Implicitly created task '{tname}' (unknown total)")
+
+                    meta = tasks[tname]
+                    if item_state in ("end", "finished", "success"):
+                        meta["completed"] += 1
+                        progress.advance(meta["task_id"], 1)
+                        progress.log(_(f"[green]✓ {tname}: {item_name} {item_message or ''}"))
+                    elif item_state in ("fail", "error"):
+                        meta["completed"] += 1
+                        progress.advance(meta["task_id"], 1)
+                        progress.log(_(f"[red]✗ {tname}: {item_name} {item_message or ''}"))
+                    elif item_state in ("start",):
+                        progress.log(_(f"[yellow]→ {tname}: starting {item_name}"))
+                    else:
+                        # mensaje genérico
+                        progress.log(f"{tname}: {item_name} {item_message or ''}")
+
+                else:
+                    TyperUtils.debug(f"Unknown event type received: {etype}")
+
+            # al salir del loop principal, procesar cualquier evento restante
+            while not event_queue.empty():
+                try:
+                    ev = event_queue.get_nowait()
+                    # reusar la lógica (simple) para avanzar cuenta de ítems
+                    if isinstance(ev, dict) and ev.get("type") == "item":
+                        tname = ev.get("task_name")
+                        if tname in tasks and ev.get("item_state") in ("end", "finished", "success", "fail", "error"):
+                            meta = tasks[tname]
+                            meta["completed"] += 1
+                            progress.advance(meta["task_id"], 1)
+                except Empty:
+                    break
+
+            # recuperar resultado de la tarea de fondo
+            try:
+                report = future.result(timeout=None)
+            except Exception as exc:
+                TyperUtils.fatal(_(f"Error executing {title}: {exc}"))
+
+    return report

@@ -81,7 +81,7 @@ def init(
     :type env_file: bool
     """
     settings_manager = ctx.obj.get("setting_manager")
-    project_name     =  str(ctx.obj.get("project", "default"))
+    project_name = ctx.obj.get("configuration", "default")
     logger = ctx.obj.get("logger", logging.getLogger(__name__))
 
     settings_file = settings_manager.create_project_settings(
@@ -105,7 +105,7 @@ def show(
     :raises ValidationError: If configuration validation fails.
     """
     settings_manager:SettingsManager = ctx.obj.get("setting_manager")
-    project_name     =  str(ctx.obj.get("project", "default"))
+    project_name = ctx.obj.get("configuration", "default")
 
     logger = ctx.obj.get("logger", logging.getLogger(__name__))
 

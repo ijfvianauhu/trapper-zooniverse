@@ -207,7 +207,7 @@ def test_zooniverse_client__download_bulk_max_subjectset(zooniverse_client):
     temp_dir = tempfile.mkdtemp(prefix="bulk_download_")
 
     try:
-        downloaded_files = zooniverse_client.subjectsets.download_bulk(max_ss.id, output_folder=Path(temp_dir))
+        downloaded_files = zooniverse_client.subjectsets.download(max_ss.id, output_folder=Path(temp_dir))
         logging.info(f"Descargados {len(downloaded_files)} archivos. en {temp_dir}")
 
         assert len(downloaded_files) == max_count, "No se descargaron todos los subjects."

@@ -17,7 +17,7 @@ setup_locale(locale.getdefaultlocale()[0] if locale.getdefaultlocale()[0] else "
 
 import typer
 from typer_config import conf_callback_factory
-from trapper_zooniverse.ui.typer.settings import SettingsManager
+from trapper_zooniverse.ui.typer.settings import SettingsManager, Settings
 from trapper_zooniverse.ui.typer.logger import logger, setup_logging
 import random
 import string
@@ -56,8 +56,10 @@ def dynaconf_loader(file_path: str) -> dict:
         settings_dir = os.path.dirname(file_path)
         file_name = os.path.basename(file_path)
         setting_manager = SettingsManager(settings_dir=Path(settings_dir))
-        settings = setting_manager.load_settings(file_name, True, True)
-        return settings.as_dict()
+        #settings = setting_manager.load_settings(file_name, True, True)
+        settings:Settings = setting_manager.load_settings_pydantic(file_name, True, True)
+
+        return settings.model_dump()
 
 # 🔹 Callback base
 base_conf_callback = conf_callback_factory(dynaconf_loader)
@@ -83,76 +85,44 @@ def dynamic_dynaconf_callback(ctx: typer.Context, param: typer.CallbackParam, va
 
     if "settings_dir" in ctx.params :
         base_path = ctx.params.get("settings_dir", ".")
-        file_path = os.path.join(base_path, ctx.params.get("project", "default"))
+        file_path = os.path.join(base_path, ctx.params.get("configuration", "default"))
     else:
-        # Las setting deberían estar ya cargadas
-        settings = ctx.obj.get("settings", {}).as_dict()
+        settings = ctx.obj.get("settings", {}).model_dump() if ctx.obj and "settings" in ctx.obj else {}
         file_path = json.dumps(settings, default=str)
 
-    a= base_conf_callback(ctx, param, file_path)
+    results= base_conf_callback(ctx, param, file_path)
 
     if ctx.obj is None:
         ctx.obj = {}
 
     settings = ctx.default_map.copy() if ctx.default_map else {}
 
-    for key, value in ctx.params.items():
-        if key == "verbosity":
-            if value is None:
-                ctx.params[key] = settings["LOGGER"]["loglevel"]
+    mapping = {
+        "verbosity" : ("LOGGER", "loglevel"),
+        "log_file" : ("LOGGER", "filename"),
+        "trapper_user": ("TRAPPER", "trapper_username"),
+        "trapper_url": ("TRAPPER", "trapper_url"),
+        "trapper_token": ("TRAPPER", "trapper_token"),
+        "trapper_password": ("TRAPPER", "trapper_password"),
+        "zooniverse_username": ("ZOONIVERSE", "zooniverse_username"),
+        "zooniverse_password": ("ZOONIVERSE", "zooniverse_password"),
+        "zooniverse_project_id": ("ZOONIVERSE", "zooniverse_project_id"),
+        "n_images_seq": ("ZOONIVERSE_CONNECTOR", "upload_collection_n_images_seq"),
+        "max_interval": ("ZOONIVERSE_CONNECTOR", "upload_collection_max_interval"),
+        "attempts": ("ZOONIVERSE_CONNECTOR", "upload_collection_attempts"),
+        "delay": ("ZOONIVERSE_CONNECTOR", "upload_collection_delay"),
+        "max_attempts_per_subject": ("ZOONIVERSE_CONNECTOR", "upload_collection_max_attempts_per_subject"),
+        "delay_seconds_per_subject": ("ZOONIVERSE_CONNECTOR", "upload_collection_delay_seconds_per_subject"),
+    }
 
-        if key == "log_file":
-            if value is None:
-                ctx.params[key] = settings["LOGGER"]["filename"]
+    for param_name in ctx.params:
+        if ctx.params[param_name] is None and param_name in mapping:
+            section, key = mapping[param_name]
+            ctx.params[param_name] = settings[section][key]
 
-        if key == "n_images_seq":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE_CONNECTOR"]["upload_collection_n_images_seq"]
+    ctx.obj["settings"] =  Settings(**settings)
 
-        if key == "max_interval":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE_CONNECTOR"]["upload_collection_max_interval"]
-
-        if key == "attempts":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE_CONNECTOR"]["upload_collection_attempts"]
-
-        if key == "delay":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE_CONNECTOR"]["upload_collection_delay"]
-
-        if key == "max_attempts_per_subject":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE_CONNECTOR"]["upload_collection_max_attempts_per_subject"]
-
-        if key == "delay_seconds_per_subject":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE_CONNECTOR"]["upload_collection_delay_seconds_per_subject"]
-
-        if key == "trapper_user":
-            if value is None:
-                ctx.params[key] = settings["TRAPPER"]["trapper_username"]
-        if key == "trapper_url":
-            if value is None:
-                ctx.params[key] = settings["TRAPPER"]["trapper_url"]
-
-        if key == "trapper_password":
-            if value is None:
-                ctx.params[key] = settings["TRAPPER"]["trapper_password"]
-
-        if key == "zooniverse_username":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE"]["zooniverse_username"]
-        if key == "zooniverse_password":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE"]["zooniverse_password"]
-        if key == "zooniverse_project_id":
-            if value is None:
-                ctx.params[key] = settings["ZOONIVERSE"]["zooniverse_project_id"]
-
-    ctx.obj["settings"] = settings
-
-    return a
+    return results
 
 # --------------------------------------------------------------------------- #
 # App metadata
@@ -161,10 +131,9 @@ def dynamic_dynaconf_callback(ctx: typer.Context, param: typer.CallbackParam, va
 APP_NAME = "trapper-zooniverse"
 __version__ = "0.1.0"
 
-
 import logging
 import gettext
-from pathlib import Path, PosixPath
+from pathlib import Path
 
 from rich.console import Console
 
@@ -209,6 +178,39 @@ def common_setup(
 
         settings_dir: Annotated[Optional[Path], typer.Option("--settings-dir",
                                 help=_("Directory containing settings files"), )] = Path(typer.get_app_dir(APP_NAME)),
+        configuration: Annotated[Optional[str], typer.Option(
+            help=_("Configuration name to use (without extension). E.g., 'development', 'production', etc.") )
+        ] = "default",
+        trapper_url: str = typer.Option(
+            None,
+            help=_("Base URL of the Trapper server (e.g., https://trapper.example.org)"),
+        ),
+        trapper_user: str = typer.Option(
+            None,
+            help=_("Username for Trapper authentication. Required unless an access token is provided")
+        ),
+        trapper_password: str = typer.Option(
+            None,
+            help=_("Password for the specified Trapper user. Only needed if no access token is used.")
+        ),
+        trapper_token: str = typer.Option(
+            None,
+            help=_("Access token for the Trapper API. Can be used instead of username/password."),
+        ),
+
+        zooniverse_username: str = typer.Option(
+            None,
+            help=_("Username to authenticate with Zooniverse.")
+        ),
+        zooniverse_password: str = typer.Option(
+            None,
+            help=_("Password for the specified Zooniverse user")
+        ),
+
+        zooniverse_project_id: str = typer.Option(
+            None,
+            help=_("ID of the Zooniverse project to connect to.")
+        ),
 
         config: Annotated[
             Path,
@@ -225,17 +227,32 @@ def common_setup(
         exit(1)
 
     ## Load settings --> in project param callback
-    settings = ctx.obj["settings"]
-    settings_dyn = SettingsManager.load_from_array(settings)
+    settings:Settings = ctx.obj["settings"]
+    #settings_dyn = SettingsManager.load_from_array(settings)
     setup_logging(APP_NAME, verbosity, log_file)
 
     TyperUtils.home = Path(typer.get_app_dir(APP_NAME))
     TyperUtils.logger = logger
 
+    zoo_client = ZooniverseClient(
+        project_id=zooniverse_project_id,
+        username=zooniverse_username,
+        password=zooniverse_password,
+    )
+    trapper_client = TrapperClient(
+        access_token=trapper_token,
+        user_password=trapper_password,
+        base_url=str(trapper_url),
+        user_name=trapper_user,
+    )
+
     ctx.obj = {
         "setting_manager": SettingsManager(settings_dir=Path(settings_dir)),
-        "settings": settings_dyn,
+        "settings": settings,
+        "configuration": configuration,
         "logger": logger,
+        "trapper_client": trapper_client,
+        "zooniverse_client": zoo_client,
         "_": _,
     }
 
@@ -560,10 +577,7 @@ def public_annotations(
         )
         TyperUtils.success(f"Annotations uploaded to Trapper and saved in {observations_file}")
         report = results[0]
-        report_dir=get_default_annotations_upload_reports_dir()
-        report_dir.mkdir(parents=True, exist_ok=True)
-        report_dir = report_dir / f"annotations_upload_report_{collection_id}_{subjectset_id}_{datetime.now():%Y%m%d_%H%M%S}.yaml"
-        TyperUtils.save_yaml(report, PosixPath(report_dir))
+        report_dir=TyperUtils.report_save(report)
         TyperUtils.success(_(f"Report saved at: {report_dir}"))
 
     except Exception as e:
