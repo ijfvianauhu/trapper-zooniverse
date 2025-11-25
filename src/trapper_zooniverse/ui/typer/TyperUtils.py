@@ -3,7 +3,7 @@ import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from pathlib import Path, PosixPath
+from pathlib import Path
 from typing import Union, List, Optional, Dict, Any, Callable
 from rich.table import Table
 from rich.console import Console
@@ -15,15 +15,12 @@ from rich.text import Text
 from rich import box
 import logging
 import typer
-from pydantic import BaseModel, HttpUrl
-from dataclasses import asdict
+from pydantic import BaseModel
 import yaml
 
 from trapper_zooniverse.i18n import _
 from trapper_zooniverse.reports import Report
-from trapper_zooniverse.ui.typer.ConfigManager import AppConfig
 from trapper_zooniverse.ui.typer.settings import Settings
-
 
 class TyperUtils:
     console = Console()
@@ -76,6 +73,12 @@ class TyperUtils:
 
     @staticmethod
     def display_config_table(config: Settings, title: str = "Config") -> None:
+        """
+        Muestra una tabla con los campos del modelo Pydantic.
+        :param config:
+        :param title:
+        :return:
+        """
         console = Console()
         table = Table(title=title, show_lines=False)
         table.add_column("Section", style="cyan", no_wrap=True)
@@ -206,6 +209,11 @@ class TyperUtils:
 
     @staticmethod
     def print_as_json(objects: List[Any]):
+        """
+        Prints the list of objects as a formatted JSON string.
+        :param objects:
+        :return:
+        """
         json_str = json.dumps([a.__dict__ for a in objects], indent=2, ensure_ascii=False, default=str)
         TyperUtils.console.print(json_str)
 
@@ -463,9 +471,237 @@ class TyperUtils:
             f"[dim]Available fields:[/dim] [cyan]{', '.join(available_fields)}[/cyan]"
         )
 
+    # python
+    def progress_bar2(
+        func,
+        func_args: tuple,
+        func_kwargs: dict = None,
+        title: str = "Processing",
+        total=0,
+        use_subtasks=False,
+        custom_callback: callable = None,
+    ) -> Any:
+        """
+        Display a Rich progress bar while executing a background function and processing
+        events sent via a callback through an internal queue.
+
+        Task ids may contain \":\" to indicate hierarchy (parent:child[:subchild...]).
+        Recognized event statuses: 'start', 'progress', 'end', 'fail' (aliases: 'stop','finished').
+        - 'progress' increases the task that generated it by 'step' (default 1).
+        - 'end' / 'fail' are applied to the parent task if one exists; otherwise to the task itself.
+        """
+        from queue import Queue, Empty
+
+        report: Report = None
+        event_queue = Queue()
+
+        def build_callback(status, task_id, name, total, step):
+            event_queue.put((status, task_id, name, total, step))
+
+        # envolver custom_callback si se proporciona (como antes)
+        if custom_callback:
+
+            def user_callback(*args, **kwargs):
+                try:
+                    TyperUtils.debug(f"Calling cutom_callback {args}...")
+                    result = custom_callback(*args, **kwargs)
+                    if result is None:
+                        return
+                    # Si devuelve iterable, encolar cada evento; si es único, encolarlo
+                    if isinstance(result, (list, tuple)):
+                        try:
+                            event_queue.put(result, timeout=1)
+                        except Exception as e:
+                            TyperUtils.error(f"Failed to enqueue event from custom_callback: {e}")
+                    else:
+                        TyperUtils.error(f"Event from custom_callback must be list or tuple")
+                except Exception as e:
+                    TyperUtils.error(f"custom_callback raised an exception: {e}")
+
+            callback = user_callback
+        else:
+            callback = build_callback
+
+        with Progress(
+            "[progress.description]{task.description}",
+            BarColumn(),
+            "[progress.percentage]{task.percentage:>3.0f}%",
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            transient=False,
+            #console=TyperUtils.console,
+        ) as progress:
+            main_task = progress.add_task(
+                f"[cyan]{title}...", total=total if (isinstance(total, int) and total > 0) else None
+            )
+            # mapping: full_task_id -> {"task_id": rich_task_id, "total": int|None, "completed": int, "description": str}
+            tasks: Dict[str, Dict[str, Any]] = {}
+
+            meta = {
+                "task_id": main_task,
+                "parent_id": None,
+                "total": total,
+                "completed": 0,
+                "description": title,
+            }
+
+            tasks["__main__"] = meta
+
+            def ensure_task(full_id: str, parent_id:str = None, description: Optional[str] = None, total_val: Optional[int] = None):
+                """
+                Create a rich task for full_id if not exists. Returns meta dict.
+                """
+                if full_id is None or full_id.strip() == "":
+                    full_id = "__main__"
+
+                TyperUtils.debug(f"Ensure task {full_id}")
+
+                if full_id in tasks:
+                    meta = tasks[full_id]
+                    # actualizar metadata si se proporciona
+                    if total_val is not None and total_val != meta["total"]:
+                        progress.update(meta["task_id"], total=total_val)
+                        meta["total"] = total_val
+                    if description and description != meta["description"]:
+                        progress.update(meta["task_id"], description=f"[cyan]{description}")
+                        meta["description"] = description
+                    return meta
+
+                #if parent_id is not None and parent_id not in tasks:
+                    # asegurar existencia del padre (sin total si no se da)
+                #    ensure_task(parent_id, "__main__", description=parent_id, total_val=None)
+
+                rich_parent = tasks["parent_id"]["task_id"] if parent_id in tasks else main_task
+                task_total = total_val if (isinstance(total_val, int) and total_val > 0) else None
+                desc = description or full_id
+                rich_id = progress.add_task(f"[cyan]{desc}", total=task_total, visible = (use_subtasks == True))
+                meta = {"task_id": rich_id, "parent_id": rich_parent,  "total": task_total, "completed": 0, "description": desc}
+                tasks[full_id] = meta
+                TyperUtils.debug(f"Created progress task for '{full_id}' (total={task_total})")
+                return meta
+
+            if func_kwargs is None:
+                func_kwargs = {}
+            final_args = func_args + (callback,)
+
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(func, *final_args, **func_kwargs)
+                while True:
+                    try:
+                        TyperUtils.debug("Trying get events...")
+                        status, task_id, name, c_total, step = event_queue.get(timeout=0.1)
+                        step = int(step) if step is not None else 1
+                    except Empty:
+                        TyperUtils.debug("Queue empty")
+                        if future.done() and (total is None or total == 0) and event_queue.empty():
+                            TyperUtils.debug("Exiting loop because future is done and queue is empty")
+                            break
+                        continue
+
+                    # Normalizar strings
+                    status = str(status).lower() if status is not None else ""
+                    task_id = str(task_id) if task_id is not None else ""
+
+                    name = name or task_id
+                    MAX_LEN = 70
+                    if len(name) > MAX_LEN:
+                        name = name[: MAX_LEN - 3] + "..."
+
+                    # determinar padre (si existe)
+                    parts = task_id.split(":") if task_id else []
+                    parent_id = ":".join(parts[:-1]) if len(parts) > 1 else None
+
+                    TyperUtils.debug(f"Processing event {status} for '{task_id}' (parent='{parent_id}')")
+
+                    # START: crear/actualizar la tarea origen y asegurarse del padre
+                    if status == "start":
+                        # crear tarea origen
+                        description =  f"🟡  {name} {task_id}" if not parent_id else f"  🟡  {name} {task_id}"
+                        ensure_task(task_id, parent_id, description=description, total_val=c_total)
+                        # si tiene padre, asegurar también la existencia del padre (sin total si no se da)
+                        #if parent_id:
+                        #    ensure_task(parent_id, description=parent_id, total_val=None)
+                        progress.log(description)
+
+                    # PROGRESS: incrementar la tarea que generó el progress
+                    elif status == "progress":
+                        meta = ensure_task(task_id, description=name, total_val=c_total)
+                        advance_by = step if step and step > 0 else 1
+                        meta["completed"] += advance_by
+                        progress.advance(meta["task_id"], advance_by)
+                        #progress.log(f"→ {name} +{advance_by}")
+                        # si alcanza total, marcar completado
+                        if meta["total"] is not None and meta["completed"] >= meta["total"]:
+                            progress.update(meta["task_id"], completed=meta["total"])
+                            TyperUtils.success(f"Task '{task_id}' completed by progress")
+
+                    # END / FAIL / STOP / FINISHED: aplicar a padre si existe, sino a la tarea misma
+                    elif status in ("end", "fail", "stop", "finished"):
+
+                        target_id = parent_id if parent_id else task_id
+                        if not target_id:
+                            TyperUtils.debug("Event without task id - ignoring")
+                            continue
+
+                        if status == "end" or status == "finished":
+                            description = f"🟢  {name} {task_id} " if target_id == task_id else f"🟢  {target_id} ← {name}"
+                        else:
+                            description = f"🔴  {name} {task_id}" if target_id == task_id else f"🔴  {target_id} ← {name}"
+
+                        # avanzar 1 unidad en la tarea objetivo
+                        meta = ensure_task(target_id, description=description, total_val=None)
+                        meta["completed"] += 1
+                        progress.advance(meta["task_id"], 1)
+                        # log visual
+                        progress.log(description)
+
+                        # si la tarea objetivo tiene total conocido y llegó al tope, actualizarla
+                        if meta["total"] is not None and meta["completed"] >= meta["total"]:
+                            progress.update(meta["task_id"], completed=meta["total"])
+                            TyperUtils.debug(f"Marked '{target_id}' as fully completed ({meta['total']})")
+
+                        # avanzar la barra principal también (unidad lógica completada)
+                        try:
+                            progress.advance(main_task, 1)
+                        except Exception:
+                            TyperUtils.debug("Failed to advance main_task")
+
+                    else:
+                        # estado desconocido -> log
+                        # progress.log(f"{task_id}: {status} {name}")
+                        pass
+
+                    # Si conocemos total general y hemos alcanzado, terminar.
+                    if isinstance(total, int) and total > 0:
+                        # contar completados agregando completados de tareas top-level (sin padres)
+                        top_completed = sum(m["completed"] for k, m in tasks.items() if ":" not in k)
+                        TyperUtils.debug(f"Checking totals: top_completed={top_completed} / total={total}")
+                        if top_completed >= total:
+                            TyperUtils.debug("Reached overall total -> breaking")
+                            # actualizar main_task al total exacto
+                            progress.update(main_task, completed=total)
+                            break
+
+                # limpiar eventos restantes rápidamente
+                while not event_queue.empty():
+                    try:
+                        _ = event_queue.get_nowait()
+                    except Empty:
+                        break
+
+                try:
+                    report = future.result(timeout=None)
+                except Exception as exc:
+                    TyperUtils.fatal(f"Error executing {title}: {exc}")
+
+        return report
+
     @staticmethod
     def progress_bar(func,  func_args: tuple, func_kwargs: dict = None, title: str = "Processing", total=0,
-                     max_workers=4) -> Report:
+                     use_subtasks=False, custom_callback:callable=None) -> Report:
         """
         Display a Rich progress bar while executing a background function and processing
         events sent via a callback through an internal queue.
@@ -490,10 +726,6 @@ class TyperUtils:
                       operate in indeterminate mode (the bar advances according to received events).
         :type total: int | None
 
-        :param max_workers: Maximum number of worker threads the operation may use; this
-                            value is appended to the arguments passed to ``func``.
-        :type max_workers: int
-
         :returns: The ``Report`` instance returned by ``func`` when execution completes successfully,
                   or ``None`` if the background task failed or returned nothing.
         :rtype: Report | None
@@ -510,7 +742,6 @@ class TyperUtils:
            - ``'start'`` — item processing started.
            - ``'end'``   — item processed successfully (increments progress).
            - ``'fail'``  — item processing failed.
-           - ``'done'``  — optional sentinel to signal immediate completion.
 
         .. rubric:: Internal behaviour
            The function creates an internal :class:`queue.Queue` and runs ``func`` inside a
@@ -525,8 +756,38 @@ class TyperUtils:
         report: Report = None
         event_queue = Queue()
 
-        def callback(status, subject_id, name):
-            event_queue.put((status, subject_id, name))
+        def build_callback(status, task_id, name, total, step):
+            event_queue.put((status, task_id, name, total, step))
+
+
+        if custom_callback:
+            def user_callback(*args, **kwargs):
+                try:
+                    # Llamar al callback del usuario
+                    TyperUtils.debug(f"Calling callback {args}...")
+                    result = custom_callback(*args, **kwargs)
+
+                    # Si devuelve None, no hay eventos que encolar
+                    if result is None:
+                        return
+
+                    # Si devuelve una iterable (lista/tupla), encolar cada evento
+                    if isinstance(result, (list, tuple)):
+                        try:
+                            TyperUtils.debug(f"Encolando varios {result}...")
+                            event_queue.put(result, timeout=1)
+                        except Exception as e:
+                            TyperUtils.error(f"Failed to enqueue event from custom_callback: {e}")
+                    else:
+                        TyperUtils.error(f"Failed to enqueue event from custom_callback: list or tuple expected")
+
+                except Exception as e:
+                    TyperUtils.error(f"custom_callback raised an exception: {e}")
+
+            callback = user_callback
+        else:
+            callback = build_callback
+
 
         with Progress(
             "[progress.description]{task.description}",
@@ -538,13 +799,14 @@ class TyperUtils:
             transient=False,
         ) as progress:
             task = progress.add_task(_(f"[cyan]{title}..."), total=total)
+            subtasks = {}
 
             TyperUtils.debug("Preparing thread pool for collecting events...")
             with ThreadPoolExecutor(max_workers=1) as executor:
                 TyperUtils.debug("Submitting thread for zooniverse_client.subjectsets.download...")
                 if func_kwargs is None:
                     func_kwargs = {}
-                final_args = func_args + (callback, max_workers)
+                final_args = func_args + (callback,)
 
                 future = executor.submit(
                     func,
@@ -557,7 +819,9 @@ class TyperUtils:
                 while True:
                     try:
                         TyperUtils.debug("Trying get events...")
-                        status, subject_id, name = event_queue.get(timeout=0.1)
+                        status, task_id, name, c_total, step = event_queue.get(timeout=0.1)
+                        #total = total if total and total > 0 else 1
+                        step  = step if step and step > 0 else 1
                     except Empty:
                         TyperUtils.debug("Queue empty")
                         # si conocemos total, y future está done pero cola puede recibir más,
@@ -567,19 +831,36 @@ class TyperUtils:
                             break
                         continue
 
-                    TyperUtils.debug("Processing event...")
+                    TyperUtils.debug("Processing event {status}...")
+
                     if status == "start":
-                        progress.log(_(f"[yellow]→ Starting {subject_id}"))
-                    elif status == "end":
-                        completed += 1
-                        progress.advance(task, 1)
-                        progress.log(_(f"[green]✓ Finished {subject_id}"))
-                    elif status == "fail":
-                        completed += 1
-                        progress.log(_(f"[red]✗ Failed {subject_id}"))
-                    elif status == "done":
-                        # si la API emite un sentinel opcional, podemos usarlo para romper inmediatamente
-                        break
+                        description = f"🟡  {name}"
+                    elif status in ("end", "fail"):
+                        description = f"🟢  {name}" if status == "end" else f"🔴  {name}"
+
+                    MAX_LEN=70
+                    if len(description) > MAX_LEN:
+                        description = description[: MAX_LEN - 3] + "..."
+
+                    if not use_subtasks:
+                        if status == "start":
+                            progress.log(description)
+                        elif status in ("end", "fail"):
+                            completed += 1
+                            progress.advance(task, 1)
+                            progress.log(description)
+                    else:
+                        if status == "start":
+                            TyperUtils.debug(f"Add task for {task_id}")
+                            stask = progress.add_task("  " + description, total=1)
+                            subtasks[task_id] = stask
+                        elif status in ("end", "fail"):
+                            if task_id in subtasks:
+                                TyperUtils.debug(f"Finish task for {task_id}")
+                                stask = subtasks.pop(task_id)
+                                progress.update(stask, completed=1, description="  "+ description)
+                                completed += 1
+                                progress.advance(task, 1)
 
                     # Si conocemos total, terminamos cuando hayamos recibido todos los eventos esperados.
                     if total is not None and completed >= total:

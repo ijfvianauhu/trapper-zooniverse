@@ -251,7 +251,7 @@ class SubjectSetsComponent(ZooniverseClientComponent):
         return self.with_results()
 
     def download(self, subject_set_id: int, output_folder: Path,
-                 callback: callable = None, max_workers: int = 8) -> Report:
+                 max_workers: int = 4, callback: callable = None) -> Report:
 
         self.client._ensure_connection()
         self.client.logger.debug(f"Starting SubjectSet  {subject_set_id} download.")
@@ -273,10 +273,10 @@ class SubjectSetsComponent(ZooniverseClientComponent):
             report.finish()
             return report
 
-        def _notify(event: str, sid: int, info):
+        def _notify(event: str, sid: int, name, total=None, step=None):
             if callback:
                 try:
-                    callback(event, sid, info)
+                    callback(event, sid, name, total, step)
                 except Exception:
                     self.client.logger.debug("Callback raised an exception", exc_info=True)
 
@@ -284,18 +284,18 @@ class SubjectSetsComponent(ZooniverseClientComponent):
             sid = getattr(subj, "id", None)
             name = getattr(subj, "display_name", getattr(subj, "name", f"subject_{sid}"))
             self.client.logger.debug(f"Sending start notification for subjet {subj}")
-            _notify("start", sid, name)
+            _notify("start", sid, f"Downloading subject {name}", None)
             try:
                 s_cmp = SubjectsComponent(self.client)
                 path = s_cmp.download(sid, save_path=str(output_folder))
                 report.add_success(sid, "download", str(path))
                 self.client.logger.debug(f"Sending end notification for subjet  {subj}")
-                _notify("end", sid, str(path))
+                _notify("end", sid, f"Download completed successfully in {str(path)}")
                 return sid
             except Exception as exc:
                 report.add_error(sid, "download", str(exc))
                 self.client.logger.debug(f"Sending fail notification for subjet {subj}: {str(exc)}")
-                _notify("fail", sid, str(exc))
+                _notify("fail", sid, f"Download completed with errors {str(exc)}")
                 self.client.logger.warning(f"Error downloading subject {sid}: {exc}")
                 return None
 

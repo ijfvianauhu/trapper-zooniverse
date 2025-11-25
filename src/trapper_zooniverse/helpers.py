@@ -77,7 +77,7 @@ def zooniverse_get_workflows(zooniverse_client:ZooniverseClient, id:int=None) ->
         raise Exception(msg)
 
 
-def zooniverse_get_subject_sets(zooniverse_client:ZooniverseClient, id = None, with_exports:bool=False,
+def zooniverse_get_subject_sets(zooniverse_client:ZooniverseClient, ss_id = None, with_exports:bool=False,
                                 wf_id=None) -> Any:
     """
     Verifies the connection to the Zooniverse API using the provided credentials.
@@ -93,8 +93,8 @@ def zooniverse_get_subject_sets(zooniverse_client:ZooniverseClient, id = None, w
     :rtype: None
     """
     try:
-        if id is not None:
-            ss = zooniverse_client.subjects.get_by_id(id)
+        if ss_id is not None:
+            ss = zooniverse_client.subjectsets.get_by_id(id)
         elif wf_id:
             ss = zooniverse_client.subjectsets.get_subject_sets_from_workflow(wf_id)
         else:
@@ -105,7 +105,7 @@ def zooniverse_get_subject_sets(zooniverse_client:ZooniverseClient, id = None, w
         return ss
 
     except Exception as e:
-        msg = f"Failed to connect to Zooniverse API. Check your settings: {str(e)}"
+        msg = f"Failed to connect to Zooniverse API: {str(e)}"
         logger.error(msg)
         raise Exception(msg)
 
