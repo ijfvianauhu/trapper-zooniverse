@@ -10,9 +10,9 @@ trapper_url= "https://wildintel-trap.uhu.es/"
 trapper_token= ""
 
 [ZOONIVERSE]
-zooniverse_username= ""
-zooniverse_password= ""
-zooniverse_project_id= ""
+zooniverse_username= "zoouser"
+zooniverse_password= "zoopass"
+zooniverse_project_id= "123"
 
 [ZOONIVERSE_CONNECTOR]
 upload_collection_n_images_seq=5
