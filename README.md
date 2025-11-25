@@ -427,6 +427,31 @@ As was the case with the image upload process, a report will be generated at the
 trapper-zooniverse reports info
 ``` 
 
+## Other uses and deployment scenarios
+
+In addition to the steps described in Quick Start, `trapper-zooniverse` can be used in several additional practical scenarios.
+
+### Downloading Zooniverse images
+
+The helper `dl_ss` downloads locally all images for a Zooniverse subject set. It is intended to fetch every subject in a
+subject set and save files in a directory together with a small manifest that maps `subject_id → filename`.
+
+Typical usage:
+
+```bash
+trapper-zooniverse helpers dl_ss  456 --output ./zoo-images 
+```
+What it does (summary):
+* Downloads media associated with each subjectset specified
+* Creates the output directory if it does not exist (--output, default: ./zoo-images).
+* Saves each subject media file in the same `--output` directory  using the pattern: `subject_<subject_id>_<filename>.<ext>`
+ 
+To obtain the ID of a subject set, you can run:
+
+```bash
+trapper-zooniverse helpers ss
+``` 
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
