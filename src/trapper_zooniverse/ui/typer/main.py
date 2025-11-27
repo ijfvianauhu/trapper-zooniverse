@@ -1,6 +1,7 @@
 import json
 import sys
 
+from click import prompt
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
 from trapper_zooniverse.ZooniverseClient import ZooniverseClient
@@ -246,6 +247,8 @@ def common_setup(
         user_name=trapper_user,
     )
 
+    connector = TrapperZooniverseConnector(zoo=zoo_client,trapper=trapper_client)
+
     ctx.obj = {
         "setting_manager": SettingsManager(settings_dir=Path(settings_dir)),
         "settings": settings,
@@ -253,6 +256,7 @@ def common_setup(
         "logger": logger,
         "trapper_client": trapper_client,
         "zooniverse_client": zoo_client,
+        "connector": connector,
         "_": _,
     }
 
@@ -385,8 +389,8 @@ def upload_collection(
 
     logger.debug(_(f"Found {len(results[0].results)} classification projects and {len(results[1].results)} research projects for collection {collection}"))
 
-    cp_selected = TyperUtils.select_from_list(results_cp)
-    rp_selected = TyperUtils.select_from_list(results_rp)
+    cp_selected,_ = TyperUtils.select_from_list(results_cp)
+    rp_selected,_ = TyperUtils.select_from_list(results_rp)
     TyperUtils.success(f"You selected classification project {cp_selected.name} (ID: {cp_selected.pk}) and research project {rp_selected.name} (ID: {rp_selected.pk})")
 
     if subjectset_name == None:
@@ -397,7 +401,7 @@ def upload_collection(
         else :
             TyperUtils.fatal(_(f"Collection {collection} not found"))
 
-    logger.debug(_(f"Using subjectset name: {subjectset_name}"))
+    logger.debug(f"Using subjectset name: {subjectset_name}")
 
     zooniverse_client = ZooniverseClient(
         project_id=zooniverse_project_id,
@@ -502,8 +506,9 @@ def upload_collection(
 )
 def public_annotations(
         ctx: typer.Context,
-        collection_id: Annotated[int, typer.Argument(help=("Collection ID"))] = ...,
-        subjectset_id: Annotated[int, typer.Argument(help=("Subjectset_ID"))] = ...,
+        collection_id: Annotated[int, typer.Argument(help=("Collection ID"))] = None,
+        subjectset_id: Annotated[int, typer.Argument(help=("Subjectset_ID"))] = None,
+        wf_id: Annotated[int, typer.Argument(help=("Workflow id"))] = None,
         observations_file: Annotated[
             Optional[Path],
             typer.Argument(help="Optional path to a CSV file where observations will be saved.")
@@ -512,46 +517,59 @@ def public_annotations(
         observation_mapping: Annotated[typer.FileText, typer.Option(help=_("CSV File containing mapping observations"))] = None,
         species_mapping: Annotated[typer.FileText, typer.Option(help=_("CSV file containing mapping species"))] = None,
 ):
+
     trapper_client = ctx.obj["trapper_client"]
     zooniverse_client = ctx.obj["zooniverse_client"]
     connector:TrapperZooniverseConnector = ctx.obj["connector"]
     logger = ctx.obj["logger"]
     _ = ctx.obj["_"]
 
-    results = TyperUtils.run_tasks_with_progress(
-        [
-            {
-                "description": _(f"Getting Trapper classification projects by collection {collection_id}"),
-                "func": trapper_client.classification_projects.get_by_collection,
-                "args": (collection_id,),
-            },
-
-            {
-                "description": _(f"Login to Zooniverse {zooniverse_client.project_id}"),
-                "func": zooniverse_client.connect,
-                "args": (),
-            },
-
-            {
-                "description": _(f"Getting Zooniverse workflows for subjectset {subjectset_id}"),
-                "func": zooniverse_client.workflows.get_by_subjectset,
-                "args": (subjectset_id,),
-            },
-        ]
-    )
-
-    results_cp = getattr(results[0], "results", [])
-    results_workflows = results[2]
-
-    if not results_cp:
-        TyperUtils.fatal(_(f"No classification projects found for collection {collection_id}"))
-
-    cp_selected = TyperUtils.select_from_list(results_cp)
+    if collection_id == None:
+        collections = trapper_client.collections.get_all()
+        col_selected,sel_index = TyperUtils.select_from_list(collections.results,
+                                            title=_("Select a Collection"),
+                                            prompt_msg=_("Please select the index of the Trapper collection whose images "
+                                                         "you want to classify"))
+    else:
+        col_selected = trapper_client.collections.get_by_id(collection_id).results[0]
 
     from types import SimpleNamespace
-    wf_selected = TyperUtils.select_from_list([ SimpleNamespace({"id":wf.id, "name": wf.display_name}) for wf in results_workflows ])
 
-    TyperUtils.success(f"You selected classification project {cp_selected.name} (ID: {cp_selected.pk}) and workflow {wf_selected.name} (ID: {wf_selected.id})")
+    if subjectset_id == None:
+        subjectsets = zooniverse_client.subjectsets.get_all()
+        simplified_list = [SimpleNamespace(pk=ss.raw["id"], name=ss.raw["display_name"]) for ss in subjectsets]
+        ss_selected,sel_index = TyperUtils.select_from_list(simplified_list,
+                                    title="Select a Subject Set",
+                                    prompt_msg="Please select the index of the Zooniverse subject set used to upload the "
+                                                 "collection selected in the previous step"
+                            )
+        ss_selected = subjectsets[sel_index]
+    else:
+        ss_selected = zooniverse_client.subjectsets.get_by_id(subjectset_id)
+
+    if wf_id == None:
+        workflows = zooniverse_client.workflows.get_all()
+        simplified_list = [SimpleNamespace(pk=ss.raw["id"], name=ss.raw["display_name"]) for ss in workflows]
+        wf_selected,sel_index = TyperUtils.select_from_list(simplified_list,
+                                                        title="Select a Workflow",
+                                                        prompt_msg="Please select the index of the Zooniverse workflow "
+                                                                     "that contains annotations for the subjects in the"
+                                                                     " subject set selected in the previous step")
+        wf_selected = workflows[sel_index]
+    else:
+        wf_selected = zooniverse_client.workflows.get_by_id(wf_id)
+
+    cps = trapper_client.classification_projects.get_by_collection(col_selected.pk)
+
+    if not cps or len(cps.results) == 0:
+        TyperUtils.fatal(_(f"No classification projects found for collection {col_selected.name} {col_selected.pk}"))
+
+    cp_selected,sel_index = TyperUtils.select_from_list(cps.results, "Select a Classification Project")
+
+    TyperUtils.success(f"You selected classification project {cp_selected.name} (ID: {cp_selected.pk}) "
+                        f", collection {col_selected.name} (ID: {col_selected.pk})"
+                       f", subject set {ss_selected.raw['display_name']} (ID: {ss_selected.id})"
+                       f" and workflow {wf_selected.raw["display_name"]} (ID: {wf_selected.raw["id"]})")
 
     ### connector
 
@@ -566,22 +584,25 @@ def public_annotations(
         observations_file = Path(temp_file.name)
 
     try:
-        results = TyperUtils.run_tasks_with_progress(
-            [
-                {
-                    "description": _(f"Uploading Zooniverse Annotations to Trapper"),
-                    "func": connector.upload_annotations,
-                    "args": (subjectset_id, wf_selected.id, collection_id, cp_selected.pk, observations_file, observation_mapping, species_mapping),
-                },
-            ]
-        )
+        results = connector.upload_annotations(ss_selected.id, wf_selected.id, col_selected.pk, cp_selected.pk, observations_file,
+                                                None, None)
+        #results = TyperUtils.run_tasks_with_progress(
+        #    [
+        #        {
+        #            "description": _(f"Uploading Zooniverse Annotations to Trapper"),
+        #            "func": connector.upload_annotations,
+        #            "args": (subjectset_id, wf.id, collection_id, cp_selected.pk, observations_file, observation_mapping, species_mapping),
+        #        },
+        #    ]
+        #)
         TyperUtils.success(f"Annotations uploaded to Trapper and saved in {observations_file}")
-        report = results[0]
+        report = results
         report_dir=TyperUtils.report_save(report)
         TyperUtils.success(_(f"Report saved at: {report_dir}"))
 
     except Exception as e:
         TyperUtils.fatal(str(e))
+
 
 if __name__ == "__main__":
     app()

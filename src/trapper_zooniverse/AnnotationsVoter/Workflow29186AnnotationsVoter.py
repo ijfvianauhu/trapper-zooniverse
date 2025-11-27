@@ -1,5 +1,7 @@
-from typing import List
-from collections import Counter
+import math
+from statistics import median
+from typing import List, Any
+from collections import Counter, defaultdict
 from typing import List, Tuple, Optional
 
 from trapper_zooniverse.AnnotationsVoter.AnnotationsVoter import AnnotationsVoter
@@ -18,37 +20,78 @@ class Workflow29186AnnotationsVoter(AnnotationsVoter):
     Extrae las anotaciones específicas del workflow 17553 (IberianCameraTrapR1_1_2_3).
     """
     @staticmethod
-    def run(observations: List[Tuple[str, dict]]) -> Optional[List[Zoo2TrapperObservation]]:
+    def run(observations: List[Any]) -> Optional[List[Zoo2TrapperObservation]]:
 
         if not observations:
             return None
 
-        species_counts = Counter(name for name, _ in observations)
-        most_common_species, _ = species_counts.most_common(1)[0]
-        filtered = [attrs for name, attrs in observations if name == most_common_species]
+        # Agrupar HOWMANY por especie
+        species_howmany = defaultdict(list)
+        k, sid, user_opinions = observations[0]
+        for species, attrs in user_opinions:
+            val = attrs.get("HOWMANY")
+            if val is not None and str(val).isdigit():
+                species_howmany[species].append(int(val))
+            else:
+                species_howmany[species].append(None)
 
-        howmany_values = [attrs.get("HOWMANY") for attrs in filtered if "HOWMANY" in attrs]
-        observationType = most_common_species if most_common_species in ["human", "vehicle", "black", "unclassified", "unknown"] else "animal"
+        # Contar votos por especie
+        species_count = Counter(species for species, _ in user_opinions)
+        sorted_species = species_count.most_common()
+        top_k_species = sorted_species[: max(1, k)]
 
-        if observationType == "human":
-            most_common_species="Homo sapiens"
-        elif observationType == "animal":
-            most_common_species=most_common_species
-        else:
-            most_common_species=None
+        result = []
 
-        count_majority = None
+        for idx, (species, votes) in enumerate(top_k_species):
+            # MEDIANA howmany
+            valid_howmany = [x for x in species_howmany[species] if x is not None]
+            howmany_median = math.ceil(median(valid_howmany)) if valid_howmany else None
 
-        if howmany_values:
-            # Contar los valores HOWMANY
-            count_majority = Counter(howmany_values).most_common(1)[0][0]
-            # Convertir a entero si es numérico
-            if count_majority.isdigit():
-                count_majority = int(count_majority)
+            # Votos que tiene la siguiente especie en el ranking de las k más votadas
+            if idx + 1 < len(top_k_species):
+                votes_next = top_k_species[idx + 1][1]
+            else:
+                votes_next = None  # última especie no tiene "siguiente"
 
-        # TODO: mapeos de observationtyoe y scientificName
-        return [Zoo2TrapperObservation(**{
-            "observationType": observationType,
-            "scientificName": most_common_species,
-            "count": int(count_majority) if isinstance(count_majority, (int, str)) and str(count_majority).isdigit() else None,
-        })]
+            if votes_next is None or votes_next <= 0:
+                confidence = 1.0
+            else:
+                confidence = votes / (votes + votes_next)
+
+            # Mapear observationType
+
+            if species == "Homo sapiens":
+                observationType = "human"
+            elif species in ["vehicle", "black", "unclassified", "unknown"]:
+                observationType = species
+            else:
+                observationType = "animal"
+
+            """result.append(
+                {
+                    "observationType": observationType,
+                    "species": species,
+                    "votes": votes,
+                    "rank": idx + 1,
+                    "votes_next": votes_next,
+                    "confidence": confidence,
+                    "howmany_median": howmany_median,
+                }
+            )"""
+
+            obs = Zoo2TrapperObservation(
+                observationType=observationType,
+                scientificName=species,  # <---- aquí puedes mapear a nombre científico real
+                count=howmany_median,  # <---- count = mediana de HOWMANY
+                countNew=None,
+                lifeStage=None,
+                sex=None,
+                behavior=None,
+                individualID=None,
+                observationTags=None,
+                observationComments=f"Automatically classified by Zooniverse for subject {sid} with confidence {confidence:.2f}",
+            )
+
+            result.append(obs)
+
+        return result

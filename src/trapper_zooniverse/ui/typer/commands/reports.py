@@ -67,9 +67,9 @@ def list(
     :type ctx: typer.Context
     :return: None
     """
-    settings_manager = ctx.obj.get("setting_manager")
-    project_name = str(ctx.obj.get("project", "default"))
-    logger = ctx.obj.get("logger", logging.getLogger(__name__))
+    #settings_manager = ctx.obj.get("setting_manager")
+    #project_name = str(ctx.obj.get("project", "default"))
+    #logger = ctx.obj.get("logger", logging.getLogger(__name__))
 
     results_dir = TyperUtils.get_default_report_dir()
     TyperUtils.reports_in_directory(results_dir)
@@ -166,21 +166,24 @@ def remove(ctx: typer.Context,
     project_name = str(ctx.obj.get("project", "default"))
     logger = ctx.obj.get("logger", logging.getLogger(__name__))
     results_dir = TyperUtils.get_default_report_dir()
+    print("-------------")
 
-    files_to_delete = list(results_dir.glob(".*.yaml"))
+    file_names = [
+        f for f in results_dir.iterdir() if f.is_file() and f.name.startswith(".") and f.name.endswith(".yaml")
+    ]
 
-    if not files_to_delete:
+    if not file_names:
         TyperUtils.warning("No archived file report found.")
         return
 
     TyperUtils.console.print("[bold red]The following files will be deleted:[/bold red]")
-    for f in files_to_delete:
+    for f in file_names:
         TyperUtils.console.print(f"  • {f.name}")
 
     if Confirm.ask("[bold]Do you want to proceed?[/bold]", default=False):
-        for f in files_to_delete:
+        for f in file_names:
             f.unlink()
-            TyperUtils.console.print(f"[green]Deleted:[/green] {f.name}")
+            TyperUtils.console.print(f"[green]Deleted:[/green] {f}")
     else:
         TyperUtils.console.print("[cyan]Operation cancelled.[/cyan]")
 

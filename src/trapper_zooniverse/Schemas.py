@@ -10,6 +10,7 @@ class ClassificationInfo(BaseModel):
     subject_name: Optional[str]
     retired: bool = False
     retirement_reason: Optional[str] = None
+    sid:int
 
 class Zoo2TrapperObservation(BaseModel):
     """Anotacion individual extraída de zoo para poder ser importada en Trapper."""
@@ -22,6 +23,7 @@ class Zoo2TrapperObservation(BaseModel):
     behavior: Optional[str] = None
     individualID: Optional[str] = None
     observationTags: Optional[str] = None
+    observationComments: Optional[str] = None
 
 class WorkflowSummary(BaseModel):
     """Resumen general de un workflow."""

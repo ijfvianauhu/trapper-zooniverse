@@ -149,7 +149,10 @@ class TyperUtils:
             title: str = "Select an item",
             show_id: bool = True,
             show_name: bool = True,
-            success_msg: str = "Selected item"
+            success_msg: str = "Selected item",
+            id_attr: str = "pk",
+            name_attr: str = "name",
+            prompt_msg: str = "Enter the number of the item you want to select"
     ) -> Any:
         """
         Allows the user to select an item from a list. If only one item exists, it is automatically selected.
@@ -178,7 +181,7 @@ class TyperUtils:
 
         if len(items) == 1:
             TyperUtils.success(f"{success_msg}: {items[0].name}")
-            return items[0]
+            return items[0], 0
 
         # Crear tabla
         table = Table(title=title, show_lines=True)
@@ -191,21 +194,20 @@ class TyperUtils:
         for i, item in enumerate(items, start=1):
             row = [str(i)]
             if show_id:
-                row.append(str(item.pk))
+                row.append(str(getattr(item, id_attr)))
             if show_name:
-                row.append(item.name)
+                row.append(str(getattr(item, name_attr)))
             table.add_row(*row)
-
         TyperUtils.console.print(table)
 
         # Pedir al usuario que elija
         choice = Prompt.ask(
-            f"[bold cyan]Enter the number of the item you want to select[/bold cyan]",
+            prompt_msg,
             choices=[str(i) for i in range(1, len(items) + 1)],
             show_choices=False
         )
 
-        return items[int(choice) - 1]
+        return items[int(choice) - 1], int(choice) -1
 
     @staticmethod
     def print_as_json(objects: List[Any]):

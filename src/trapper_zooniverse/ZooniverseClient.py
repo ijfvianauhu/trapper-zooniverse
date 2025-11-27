@@ -2,14 +2,17 @@ import os
 import tempfile
 import time
 import logging
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
-from typing import List, Tuple, Optional, Union, Dict
+from typing import List, Tuple, Optional, Union, Dict, Callable, Any
 import json
 import requests
 from panoptes_client import SubjectSet, Subject, Project, Workflow, ProjectRole, User, Classification, Panoptes
+from panoptes_client.panoptes import PanoptesAPIException
+
 from trapper_zooniverse.Schemas import SubjectSetResults
 from pathlib import PurePath
 from trapper_zooniverse.i18n import setup_i18n, _
@@ -48,6 +51,7 @@ class WorkflowsComponent(ZooniverseClientComponent):
     def get_by_subjectset(self, subjectset_id:int) -> List[Workflow]:
         self.client._ensure_connection()
         subject_set = SubjectSet.find(subjectset_id)
+        print(subject_set.__dict__)
         workflow_ids = subject_set.raw["links"].get("workflows", [])
         workflows = [Workflow.find(wid) for wid in workflow_ids]
 
@@ -369,6 +373,7 @@ class SubjectsComponent(ZooniverseClientComponent):
                 subject.links.project = self.client.project_id
                 subject.metadata['Filename'] = os.path.basename(path)
                 if metadata :
+                    subject.external_id = metadata.get("origin", None)
                     for k, v in metadata.items():
                         subject.metadata[k] = v
                 subject.add_location(path)
@@ -535,6 +540,7 @@ class SubjectsComponent(ZooniverseClientComponent):
 
 # AnnotationsComponent
 #
+
 
 class AnnotationsComponent(ZooniverseClientComponent):
 
@@ -745,33 +751,98 @@ class AnnotationsComponent(ZooniverseClientComponent):
 
         return anotations
 
-    def get_by_workflow(self, workflow_id: int, generate: bool=False) -> List[dict]:
+    def get_by_workflow(self, workflow_id: int, generate: bool=False, subject_filter: Optional[Callable[
+        [Any], bool]] = None) -> List[dict]:
         self.client._ensure_connection()
 
         workflow = Workflow.find(workflow_id)
 
-        if generate:
-            export = workflow_id.get_export('classifications', egenerate=True)
-        else:
-            export = workflow_id.get_export('classifications', wait=True, wait_timeout=600)
+        try:
+            # download last export
+            classification_export = workflow.get_export("classifications", wait=True, wait_timeout=600)
+        except PanoptesAPIException as e:
+            classification_export = workflow.get_export(
+                "classifications", generate=True, wait=True, wait_timeout=600
+        )
 
-        reader = export.csv_dictreader()
+        reader = classification_export.csv_dictreader()  # esto ya es un DictReader
         rows = list(reader)
 
-        annotations_data = []
+        results = defaultdict(
+            lambda: {"summary": {"total_subjects": 0, "retired_subjects": 0}, "data": defaultdict(list)}
+        )
+
         for row in rows:
-            annotations = AnnotationsComponent._safe_load_json(row.get('annotations', '[]'), default=[])
-            annotations_data.append({
-                "classification_id": row.get('classification_id'),
-                "user_name": row.get('user_name'),
-                "user_id": row.get('user_id'),
-                "subject_ids": AnnotationsComponent._parse_subject_ids(row.get('subject_ids', "")),
-                "annotations": annotations
-            })
 
-        return annotations_data
+            wname = row.get("workflow_name") or "unknown_workflow"
+            wid = row.get("workflow_id") or "unknown_id"
+            wver = row.get("workflow_version") or ""
+            workflow_key = f"{wid}:{wname}:{wver}"
 
-    def get_by_subjectset(self, subjectset_id: int, votes: bool=True) -> SubjectSetResults:
+            subject_ids = AnnotationsComponent._parse_subject_ids(row.get("subject_ids", ""))
+
+            if not subject_ids:
+                raise ValueError(f"No se pudieron parsear subject_ids en la fila: {row}")
+
+            subject_data_raw = row.get("subject_data") or ""
+            subject_data_parsed = {}
+
+            if subject_data_raw:
+                try:
+                    subject_data_parsed = json.loads(subject_data_raw)
+                except Exception:
+                    # Algunos exports usan comillas simples o están mal escapados
+                    try:
+                        subject_data_parsed = json.loads(subject_data_raw.replace("'", '"'))
+                    except Exception:
+                        raise
+                        #subject_data_parsed = {}
+            else:
+                logging.info("No subject_data found in row.", subject_ids)
+
+            for sid in subject_ids:
+                if subject_filter is not None and not subject_filter(sid):
+                    logging.info(f"{sid} skipped", subject_ids)
+                    continue
+
+                results[workflow_key]["summary"]["total_subjects"] += 1
+
+                subject_data = subject_data_parsed[str(sid)]
+                retired =  subject_data["retired"]["retirement_reason"] if "retired" in subject_data else None
+
+                if retired:
+                    results[workflow_key]["summary"]["retired_subjects"] += 1
+
+                subject_name = None
+                for k in ("filename", "Filename", "file_name", "name", "display_name"):
+                    if isinstance(subject_data, dict) and k in subject_data:
+                        subject_name = subject_data[k]
+                        break
+
+                # Busco el media_id de la imagen original, me baso en el nombre de la imagen
+                # si consulto los metadato se eterniza el proceso.
+                # a=SubjectsComponent(self.client)
+                # a.get_by_id(sid)
+                media_id = self._get_media_id(subject_name)
+
+                annotations = AnnotationsComponent._safe_load_json(row.get("annotations", "[]"), default=[])
+
+                classification_info = {
+                    "classification_id": row.get("classification_id"),
+                    "user_name": row.get("user_name"),
+                    "user_id": row.get("user_id"),
+                    "subject_name": subject_name,
+                    "retired": retired is not None,
+                    "retirement_reason": retired,
+                    "annotations": annotations,
+                    "sid": sid
+                }
+
+                results[workflow_key]["data"][f"{sid}:{media_id}"].append(classification_info)
+
+        return SubjectSetResults(workflows=results)
+
+    def get_by_subjectset(self, workflow_id, subjectset_id: int, votes: bool=True) -> SubjectSetResults:
         """
         Fetches the results of all subjects in a SubjectSet as Pydantic models.
 
@@ -793,102 +864,127 @@ class AnnotationsComponent(ZooniverseClientComponent):
                 return [fix_encoding(x) for x in s]
             return s
 
-        subject_set = SubjectSet.find(subjectset_id)
+        print(f"Fetching results for SubjectSet {subjectset_id} in Workflow {workflow_id}...")
+        subject_set : SubjectSet = SubjectSet.find(subjectset_id)
+        # Slow method: build set of subject IDs in the subject set
+        # get subjects from subjec is not supported directly in panoptes-client
+        subject_ids = {s.id for s in subject_set.subjects}
 
-        try:
-            export=subject_set.get_export('classifications')
-        except Exception:
-            export = subject_set.generate_export('classifications')
-        # message = f"No existing {export_type} export found for {object_type} {obj.id}. Generating new one..."
+        def subject_filter(sid:int) -> bool:
+            return sid in subject_ids
 
-        from collections import defaultdict
+        return self.get_by_workflow(workflow_id, False, subject_filter)
 
-        reader = export.csv_dictreader()
+        for subject in subject_set.subjects:
+            print(subject.id, subject.metadata)
+
+        #try:
+            # download last export
+        #    classification_export=subject_set.get_export('classifications', wait=True, wait_timeout=600)
+        #except PanoptesAPIException as e:
+        #    classification_export = subject_set.get_export("classifications", generate=True, wait=True, wait_timeout=600)
+
+        #classification_export_csv=classification_export.csv_dictreader()
+
+        #from collections import defaultdict
+
         # Fix utf-8 encoding issues
-        rows = fix_encoding(list(export.csv_dictreader()))
+        #classifications = fix_encoding(list(classification_export_csv))
 
-        results = defaultdict(lambda: {"summary": {"total_subjects": 0, "retired_subjects": 0},
-                                       "data": defaultdict(list)})
-        for row in rows:
-            wname = row.get('workflow_name') or 'unknown_workflow'
-            wid = row.get('workflow_id') or 'unknown_id'
-            wver = row.get('workflow_version') or ''
-            workflow_key = f"{wid}:{wname}:{wver}"
+        #results = defaultdict(lambda: {"summary": {"total_subjects": 0, "retired_subjects": 0},
+        #                               "data": defaultdict(list)})
+        #for row in classifications:
+        #    wname = row.get('workflow_name') or 'unknown_workflow'
+        #    wid = row.get('workflow_id') or 'unknown_id'
+        #    wver = row.get('workflow_version') or ''
+        #    workflow_key = f"{wid}:{wname}:{wver}"
 
-            subject_ids = AnnotationsComponent._parse_subject_ids(row.get('subject_ids', ""))
+        #    subject_ids = AnnotationsComponent._parse_subject_ids(row.get('subject_ids', ""))
 
             # --- Nombre del subject (si existe en metadata o subject_data)
 
-            subject_data_raw = row.get("subject_data") or ""
-            subject_data_parsed = {}
-            if subject_data_raw:
-                try:
-                    subject_data_parsed = json.loads(subject_data_raw)
-                except Exception:
+        #    subject_data_raw = row.get("subject_data") or ""
+        #    subject_data_parsed = {}
+        #    if subject_data_raw:
+        #        try:
+        #            subject_data_parsed = json.loads(subject_data_raw)
+        #        except Exception:
                     # Algunos exports usan comillas simples o están mal escapados
-                    try:
-                        subject_data_parsed = json.loads(subject_data_raw.replace("'", '"'))
-                    except Exception:
-                        subject_data_parsed = {}
+        #            try:
+        #                subject_data_parsed = json.loads(subject_data_raw.replace("'", '"'))
+        #            except Exception:
+        #                subject_data_parsed = {}
 
-            for sid in subject_ids:
-                results[workflow_key]["summary"]["total_subjects"] += 1
+        #    for sid in subject_ids:
+        #        results[workflow_key]["summary"]["total_subjects"] += 1
 
-                sid_str = str(sid)
-                subdata = subject_data_parsed.get(sid_str, {})
+        #        sid_str = str(sid)
+        #        subdata = subject_data_parsed.get(sid_str, {})
 
                 # Intentar deducir un nombre legible
-                subject_name = None
-                for k in ("filename", "Filename", "file_name", "name", "display_name"):
-                    if isinstance(subdata, dict) and k in subdata:
-                        subject_name = subdata[k]
-                        break
+        #        subject_name = None
+        #        for k in ("filename", "Filename", "file_name", "name", "display_name"):
+        #            if isinstance(subdata, dict) and k in subdata:
+        #                subject_name = subdata[k]
+        #                break
 
                 # get MEDIA_ID
 
-                def get_media_id(s:str):
-                    import re
+        #        def get_media_id(s:str):
+        #            import re
 
-                    s = "R0034/R0034-DONA_0066/R0034-DONA_0066__20250101_7436.JPG"
+        #            s = "R0034/R0034-DONA_0066/R0034-DONA_0066__20250101_7436.JPG"
 
-                    # 1️⃣ Última parte del path
-                    filename = s.split('/')[-1]
+        #            # 1️⃣ Última parte del path
+        #            filename = s.split('/')[-1]
                     #print(filename)  # R0034-DONA_0066__20250101_7436.JPG
 
                     # 2️⃣ Número después de __
-                    match = re.search(r'__(\d+)', filename)
-                    number = match.group(1) if match else None
-                    return number
+        #            match = re.search(r'__(\d+)', filename)
+        #            number = match.group(1) if match else None
+        #            return number
 
-                media_id = get_media_id(subject_name)
+        #        media_id = get_media_id(subject_name)
 
-                if not subject_name:
+        #        if not subject_name:
                     # Si no encontramos un nombre, guardamos el subdata completo
-                    subject_name = json.dumps(subdata, ensure_ascii=False)
+        #            subject_name = json.dumps(subdata, ensure_ascii=False)
 
                 # --- Retired y razón de retiro
-                retired_info = subdata.get("retired", {})
-                is_retired = bool(retired_info)  # True si hay un objeto de retired
-                retirement_reason = retired_info.get("retirement_reason") if is_retired else None
+        #        retired_info = subdata.get("retired", {})
+        #        is_retired = bool(retired_info)  # True si hay un objeto de retired
+        #        retirement_reason = retired_info.get("retirement_reason") if is_retired else None
 
-                if is_retired:
-                    results[workflow_key]["summary"]["retired_subjects"] += 1
+        #        if is_retired:
+        #            results[workflow_key]["summary"]["retired_subjects"] += 1
 
-                annotations = AnnotationsComponent._safe_load_json(row.get('annotations', '[]'), default=[])
+        #        annotations = AnnotationsComponent._safe_load_json(row.get('annotations', '[]'), default=[])
 
-                classification_info = {
-                    "classification_id": row.get('classification_id'),
-                    "user_name": row.get('user_name'),
-                    "user_id": row.get('user_id'),
-                    "subject_name": subject_name,
-                    "retired": is_retired,
-                    "retirement_reason" : retirement_reason,
-                    "annotations": annotations
-                }
-
-                results[workflow_key]["data"][f"{sid}:{media_id}"].append(classification_info)
+        #        classification_info = {
+        #            "classification_id": row.get('classification_id'),
+        #            "user_name": row.get('user_name'),
+        #            "user_id": row.get('user_id'),
+        #            "subject_name": subject_name,
+        #            "retired": is_retired,
+        #            "retirement_reason" : retirement_reason,
+        #            "annotations": annotations
+        #        }
+        #
+        #        results[workflow_key]["data"][f"{sid}:{media_id}"].append(classification_info)
 
         return SubjectSetResults(workflows=results)
+
+    def _get_media_id(self,fullfilename:str):
+        import re
+
+        basename = os.path.basename(fullfilename)
+
+        match = re.match(r"(\d+)(?=_x_)", basename)
+        if match:
+            first_number = match.group(1)
+            return first_number
+        else:
+            None
 
     def _get_or_generate_export(self, obj, export_type: str = "classifications", wait: bool = True, timeout: int = 600):
         """
@@ -1027,7 +1123,6 @@ class ZooniverseClient:
         if not self._connected:
             logging.info("Nos volvemos a conectar automáticamente antes de la operación...")
             self.connect()
-
 
     def disconnect(self):
         """Desconecta del servicio Panoptes limpiando la instancia interna."""

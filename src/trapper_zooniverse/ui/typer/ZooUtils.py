@@ -1,6 +1,7 @@
 import json
 from typing import Optional, Any,  Tuple
 
+from trapper_zooniverse.Schemas import SubjectSetResults
 from trapper_zooniverse.ui.typer.TyperUtils import TyperUtils
 from rich.markdown import Markdown
 from rich.syntax import Syntax
@@ -44,6 +45,7 @@ class ZooUtils:
         table.add_column("Version", style="magenta")
         table.add_column("Status", style="magenta")
         table.add_column("Subject Sets", style="yellow", justify="right")
+        table.add_column("Subjects", style="yellow", justify="right")
         table.add_column("Last Export", style="yellow", justify="right")
 
         for wf in workflows:
@@ -62,7 +64,8 @@ class ZooUtils:
                 str(wf.version) if wf.version else "—",
                 str(wf.active),
                 str(subject_sets_count),
-                str("not implemented")
+                str(wf.raw.get("subjects_count", "-")),
+                str("not implemented"),
             )
 
         TyperUtils.console.print(table)
@@ -199,6 +202,7 @@ class ZooUtils:
         table.add_column("Created", style="yellow")
         table.add_column("Updated", style="magenta")
         table.add_column("Subjects Count", justify="right", style="blue")
+        table.add_column("Workflows", justify="right", style="blue")
 
         for ss in subject_sets:
             # Algunos SubjectSets pueden no tener todos los campos
@@ -206,13 +210,15 @@ class ZooUtils:
             updated = getattr(ss, "updated_at", "—")
             name = getattr(ss, "display_name", "—")
             subject_count = getattr(ss, "set_member_subjects_count", "—")
+            workflows=(ss.raw["links"]["workflows"])
 
             table.add_row(
                 str(ss.id),
                 name,
                 str(created),
                 str(updated),
-                str(subject_count)
+                str(subject_count),
+                ",".join(workflows)
             )
 
         TyperUtils.console.print(table)
@@ -361,6 +367,57 @@ class ZooUtils:
         panel = Panel(table, title=title, expand=False, border_style="blue")
         TyperUtils.console.print(panel)
 
+
+    @staticmethod
+    def show_annotations(annotations: SubjectSetResults, title: str = "Annotations"):
+        console = Console()
+
+        table = Table(title="SubjectSet Results", show_lines=True)
+
+        table.add_column("Workflow", style="cyan", no_wrap=True)
+        table.add_column("Subject", style="magenta")
+        table.add_column("Subject Name", style="magenta")
+
+        table.add_column("Classification ID", style="green")
+        table.add_column("User", style="yellow")
+        table.add_column("Annotation", style="white")  # <- un único campo
+        table.add_column("Retired", style="red")
+
+        # Recorremos todos los workflows
+        for workflow_id, workflow_data in annotations.workflows.items():
+            # workflow_data.data → Dict[str, List[ClassificationInfo]]
+            for subject_id, classifs in workflow_data.data.items():
+                # Cada clasificación = una fila
+                for c in classifs:
+                    # ------------------------------
+                    #   Parseo compacto de annotations
+                    # ------------------------------
+                    # Esperamos: c.annotations = [{'task': 'T3', 'value': [{'choice': ..., 'answers': {'HOWMANY': ...}}]}]
+                    ann_str = "—"
+
+                    try:
+                        ann = c.annotations[0]["value"][0]
+                        choice = ann.get("choice", "unknown")
+                        count = ann.get("answers", {}).get("HOWMANY", None)
+
+                        if count:
+                            ann_str = f"{choice} ({count})"
+                        else:
+                            ann_str = choice
+                    except Exception:
+                        ann_str = "invalid"
+
+                    table.add_row(
+                        workflow_id,
+                        subject_id,
+                        c.subject_name,
+                        c.classification_id or "",
+                        c.user_name or "",
+                        ann_str,
+                        "✓" if c.retired else "",
+                    )
+
+        console.print(table)
 
     @staticmethod
     def show_annotations_table(annotations: List[Tuple[int, str]], title: str = "Annotations"):

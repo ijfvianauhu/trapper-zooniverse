@@ -125,9 +125,9 @@ def zooniverse_get_subjects(zooniverse_client:ZooniverseClient, id = None, ss_id
     """
     try:
         if id is None and ss_id is not None:
-            s = zooniverse_client.subjects.get_by_subject_set(ss_id)
-            s=zooniverse_client.subjects.get_by_subjectset
-        s = zooniverse_client.subjects.get_by_id(id)
+            s = zooniverse_client.subjects.get_by_subjectset(ss_id)
+        else:
+            s = zooniverse_client.subjects.get_by_id(id)
 
         return s
 

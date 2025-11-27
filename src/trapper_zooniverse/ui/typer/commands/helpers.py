@@ -27,6 +27,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from queue import Queue, Empty
+from types import SimpleNamespace
 from typing import Annotated, List
 
 from rich.progress import Progress, TimeElapsedColumn, BarColumn, TimeRemainingColumn
@@ -123,6 +124,56 @@ def main_callback(ctx: typer.Context):
     # ctx.obj = {"config": "global value"}
     # typer.echo("Callback executed")
     pass
+
+@app.command(help=_("This command allows users to fetch all annotations from Zooniverse." + " (alias: ann)"),
+             short_help=_("Retrieve annotations from Zooniverse ") + " (alias: ann)")
+def annotations(
+    ctx: typer.Context,
+    workflow_id: Annotated[int, typer.Argument(help=("Filter annotations by workflow"))] = None,
+    subjectset: Annotated[int, typer.Option(help=("Filter annotations by workflow"))] = None,
+    config: Annotated[
+        Path, typer.Option(hidden=True, help=_("File to save the report"), callback=dynamic_dynaconf_callback)
+    ] = None,
+):
+    """
+    Retrieve research projects from a Trapper instance and display them.
+
+    :param ctx: Typer context.
+    :type ctx: typer.Context
+    :param url: Base URL of the Trapper server.
+    :param config: Internal configuration option (dynamic callback).
+    :type config: pathlib.Path | None
+    :raises Exception: If retrieval fails a fatal message is logged.
+    """
+    settings = ctx.obj.get("settings", {})
+    zoo:ZooniverseClient = ctx.obj.get("zooniverse_client")
+
+    if workflow_id == None:
+        workflows = zoo.workflows.get_all()
+        simplified_list = [SimpleNamespace(pk=ss.raw["id"], name=ss.raw["display_name"]) for ss in workflows]
+        wf_selected,index = TyperUtils.select_from_list(simplified_list, "Select a Workflow")
+        wf_selected = workflows[index]
+    else:
+        wf_selected = zoo.workflows.get_by_id(workflow_id)
+
+    TyperUtils.info(f"Retrieving annotations from Zooniverse {wf_selected.id } workflow...")
+
+    if subjectset == None:
+        a= zoo.annotations.get_by_workflow(wf_selected.id)
+    else:
+        a= zoo.annotations.get_by_subjectset(wf_selected.id, subjectset)
+
+    ZooUtils.show_annotations(a)
+    """try:
+        TyperUtils.info(f"Retrieving deployments from Trapper Instance {trapper_client.base_url}...")
+        results = trapper_deployments(trapper_client)
+        #logger.info(f"Retrieved {len(results[0].results)} collections")
+        TyperUtils.json2Table(results, title="Deployments", columns=["pk", "name", "deployment_id", "description", "owner"])
+    except Exception as e:
+        TyperUtils.fatal(f"Failed retrieving Trapper deployments: {str(e)}")
+    """
+app.command(name="ann", hidden=True, help=_("Alias for annotations")) (annotations)
+
 
 @app.command(help=_("Test connection to Trapper server instance and Zooniverse") + " (alias: tc)",
              short_help=_("Test connection to Trapper server instance and Zooniverse") + " (alias: tc)")
@@ -370,7 +421,7 @@ def subjects(ctx: typer.Context,
         TyperUtils.fatal(_("Dede indicar el identificador del sujeto, o el subjectset_id, no ambos."))
 
     try:
-        TyperUtils.info(_(f"Getting subject from Zooniverse {zooniverse_client.project_id}, subjectset {id}"))
+        TyperUtils.info(_(f"Getting subject from Zooniverse {zooniverse_client.project_id}, subjectset {subjectset_id}"))
         results = zooniverse_get_subjects(zooniverse_client, id, subjectset_id)
 
         if raw:
@@ -573,3 +624,4 @@ def deployments(ctx: typer.Context,
         TyperUtils.fatal(f"Failed retrieving Trapper deployments: {str(e)}")
 
 app.command(name="dpl", hidden=True, help=_("Alias for deployments")) (download_ss)
+
