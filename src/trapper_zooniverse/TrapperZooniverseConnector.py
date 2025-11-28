@@ -357,7 +357,8 @@ class TrapperZooniverseConnector:
                             [o for o in trapper_observations.results if str(o.mediaID) == media_id]
 
                     # fake block
-                    if False and len(all_media_observations) == 0:
+                    #if False and len(all_media_observations) == 0:
+                    if len(all_media_observations) == 0:
                         self.logger.debug(f"No se han encontrado observaciones en Trapper para media {media_id} ")
                         report.add_error(
                             f"subject:{subject_id}",
@@ -367,6 +368,7 @@ class TrapperZooniverseConnector:
                     else:
                         all_media_observations_ids = list({obj.id for obj in all_media_observations if obj.id is not None})
                         # fake block
+                        """
                         all_media_observations_ids = [10]
                         inst = TrapperObservationResultsTrapper(
                             _id="10",
@@ -399,8 +401,8 @@ class TrapperZooniverseConnector:
                             englishName="Red fox",
                             bboxes=[[100.0, 150.0, 300.0, 400.0]],  # x1, y1, x2, y2
                         )
-
-                        all_media_observations = [inst]
+                        
+                        all_media_observations = [inst]"""
                         # end fake block
 
                         # Zooniverse decision
