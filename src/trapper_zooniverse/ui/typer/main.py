@@ -1,7 +1,7 @@
 import json
 import sys
 
-from click import prompt
+import requests
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
 from trapper_zooniverse.ZooniverseClient import ZooniverseClient
@@ -167,6 +167,30 @@ app.add_typer(logger_commands.app, name="logger")
 app.add_typer(helpers_commands.app, name="helpers")
 app.add_typer(reports_commands.app, name="reports")
 
+def get_latest_github_release(owner: str, repo: str) -> str:
+    """
+    Returns the tag name of the latest GitHub release.
+    """
+    url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise RuntimeError(f"GitHub API request failed with status {response.status_code}")
+    data = response.json()
+    return data["tag_name"]
+
+
+def is_newer_version(current_version: str, latest_version: str) -> bool:
+    """
+    Returns True if latest_version is newer than current_version.
+    Assumes versions are in semantic versioning format: vMAJOR.MINOR.PATCH
+    """
+
+    def parse_version(v: str):
+        return tuple(int(x) for x in v.lstrip("v").split("."))
+
+    return parse_version(latest_version) > parse_version(current_version)
+
+
 @app.callback()
 #@use_yaml_config(default_value=config_manager.ensure_config_file())
 def common_setup(
@@ -259,6 +283,18 @@ def common_setup(
         "connector": connector,
         "_": _,
     }
+
+    latest_version = get_latest_github_release("ijfvianauhu", APP_NAME)
+    if is_newer_version(__version__, latest_version):
+        TyperUtils.warning(
+            _(
+                f"A newer version is available: {latest_version}. You can download it from "
+                f"https://github.com/ijfvianauhu/trapper-zooniverse"
+            )
+        )
+    else:
+        pass
+
 
 @app.command("collections-upload",
          short_help=_("Upload all media (images) from a Trapper collection to a Zooniverse subject set"),
