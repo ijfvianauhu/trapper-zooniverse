@@ -1,0 +1,67 @@
+name: Build and Upload Executables to Release
+
+permissions:
+  contents: write
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+jobs:
+  build-and-upload:
+    env:
+      artifact_name: ${{ format('{0}-{1}{2}', matrix.file_name, matrix.pyinstaller_os, matrix.artifact_ext) }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            pyinstaller_os: linux
+            artifact_ext: ""
+            file_name: trapper-zooniverse
+          - os: windows-latest
+            pyinstaller_os: windows
+            artifact_ext: ".exe"
+            file_name: trapper-zooniverse.exe
+          - os: macos-latest
+            pyinstaller_os: macos-x86_64
+            artifact_ext: ""
+            file_name: trapper-zooniverse
+          - os: macos-14
+            pyinstaller_os: macos-arm64
+            artifact_ext: ""
+            file_name: trapper-zooniverse
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install --upgrade uv
+
+      - name: Install project dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Build executable with PyInstaller
+        run: |
+          uv run pyinstaller --onefile --name ${{ env.artifact_name }}  src/trapper_zooniverse/ui/typer/main.py
+
+      - name: Fix permissions (macOS/Linux)
+        if: runner.os != 'Windows'
+        run: chmod +x dist/${{ env.artifact_name }}
+
+      - name: Upload executable to existing release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/${{ env.artifact_name }}
+          token: ${{ secrets.PAT_TOKEN }}
