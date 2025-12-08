@@ -174,7 +174,8 @@ def get_latest_github_release(owner: str, repo: str) -> str:
     url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
     response = requests.get(url)
     if response.status_code != 200:
-        raise RuntimeError(f"GitHub API request failed with status {response.status_code}")
+        TyperUtils.error(f"GitHub API request failed with status {response.status_code}")
+        return None
     data = response.json()
     return data["tag_name"]
 
@@ -285,7 +286,7 @@ def common_setup(
     }
 
     latest_version = get_latest_github_release("ijfvianauhu", APP_NAME)
-    if is_newer_version(__version__, latest_version):
+    if latest_version and  is_newer_version(__version__, latest_version):
         TyperUtils.warning(
             _(
                 f"A newer version is available: {latest_version}. You can download it from "

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class Workflow29186AnnotationExtractor(AnnotationsExtractor):
     """
-    Extract annotations specific to workflow 29186 (Doñana National Park │ 63.4).
+    Extract annotations specific to workflow 29187 (Tatra National Park  │ 91.8).
 
     Extracts all user choices, counts how many choices each user made (K), finds the most frequent number of choices
     (not exceeding k_max) k_majority, and returns users choices and the highest k_majority (in case of multimodal).
@@ -22,24 +22,33 @@ class Workflow29186AnnotationExtractor(AnnotationsExtractor):
     """
 
     zoo_to_trapper = {
-        "REDDEER": "Cervus elaphus hispanicus",
+        "REDDEER" : "Cervus elaphus",
+        "ROEDEER" : "Capreolus",
+        "CERVIDREDORROEDEER": "Capreolus capreolus",
         "REDFOX": "Vulpes vulpes",
-        "WILDBOAR": "Sus scrofa",
-        "CERVIDREDORFALLOWDEER": "Capreolus capreolus",
-        "COMMONGENET": "Genetta genetta",
-        "COW": "Bos taurus",
-        "EGYPTIANMONGOOSE": "Herpestes ichneumon",
-        "EUROPEANBADGER": "Meles meles",
-        "EUROPEANRABBIT": "Oryctolagus cuniculus",
-        "FALLOWDEER": "Dama dama",
-        "HORSE": "Equus (Equus) caballus",
-        "IBERIANHARE": "Lepus granatensis",
-        "IBERIANLYNX": "Lynx pardinus",
-        "LEPORIDRABBITORHARE": "Leporidae",  # ¿¿
-        "NOANIMAL": "human",  # ??
-        "HUMANORVEHICLE": "human",  # ??
-        "OTHERSPECIES": "unknown",  ##??
-        "UNRECOGNIZABLE": "unknown",  # ??
+        "REDSQUIRREL": "Sciurus vulgaris",
+        "BROWNBEAR" : "Ursus arctos",
+        "PINEMARTEN": "Martes martes",
+        "BEECHMARTEN" : "Martes foina",
+        "MARTESPINEORBEECHMARTEN" : "Martes",
+        "CHAMOIS" : "Rupicapra",
+        "EURASIANLYNX" : "Lynx lynx",
+        "WOLF" : "Canis lupus",
+        "EURASIANBADGER" : "Meles meles",
+        "MARMOT" : "Marmota marmota",
+        "WILDBOAR" : "Sus scrofa",
+        "EUROPEANHARE" : "Lepus europaeus",
+        "DOMESTICDOG" : "Canis lupus familiaris",
+        "DOMESTICCAT" : "Felis catus",
+        "STOATERMINE" :  "Mustela erminea",
+        "WEASEL" : "Mustela nivalis",
+        "MUSTELASTOATORWEASEL" :"Mustelidae",           # check
+        "SEMIAQUATICMUSTELIDAE" : "Mustelidae",         # check
+        "BIRDGENERAL" :"Aves",
+        "OTHERSPECIES": "unknown",                      # check
+        "NOANIMAL" : "unknown",                         # check
+        "UNRECOGNIZABLE" : "unclassified",              # check
+        "HUMANORVEHICLE" : "unknown",                   # check
     }
 
     @staticmethod
