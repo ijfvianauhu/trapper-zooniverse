@@ -1,7 +1,7 @@
 from collections import defaultdict
 from datetime import datetime, time, timezone
 from pathlib import Path
-from typing import List, Dict, Tuple, Any, Optional, Callable
+from typing import List, Dict, Tuple, Any, Optional, Callable, Literal
 import logging, os
 import tempfile
 
@@ -85,27 +85,30 @@ class TrapperZooniverseConnector:
             progress_callback: Optional[Callable[[str, int], None]] = None, # <--- callback
             max_workers=8
     ) -> Report:
+
         report = Report(f"Collection {collection} from {self.trapper.base_url}", type="UploadMediaReport" )
         metadata = {}
 
-        start_time = datetime.now().isoformat()
-        self.logger.debug(f"Starting upload_collection at {start_time}")
+        def _notify(task_name: str,state: str, advance: int = 1,total: int | None = None,
+                description: str | None = None, set_total: bool = False, item_name:str = None,
+                item_status: Literal["start", "end", "fail"] | None = None,
+        ):
+            if progress_callback:
+                progress_callback( task_name, state, advance, total, description, set_total, item_name, item_status)
+
+        self.logger.debug(f"Starting upload_collection at {datetime.now().isoformat()}")
         self.logger.debug(f"Getting media for {classification_project} and collection {collection}...")
 
-        if progress_callback:
-            progress_callback("getting_media", state="start",
-                              description=f"Getting media for classificacrin project {classification_project} and collection {collection}...")
+        _notify("getting_media", state="start",
+                              description=f"Getting media for classification project {classification_project} and collection {collection}...")
 
         media:TrapperMediaList=self.trapper.media.get_by_collection(classification_project, collection)
-
-        if progress_callback:
-            progress_callback("getting_media", state="end")
+        _notify("getting_media", state="end", set_total=True, total=len(media.results))
 
         self.logger.debug(
             f"Obtained {len(media.results)} media from classification project {classification_project} and collection {collection}")
 
-        if progress_callback:
-            progress_callback("getting_observations", state="start",
+        _notify("getting_observations", state="start",
                 description=f"Getting observations from classification project {classification_project} and collection {collection}")
 
         self.logger.debug(f"Getting observations from classification project  {classification_project} and collection {collection}")
@@ -113,14 +116,12 @@ class TrapperZooniverseConnector:
         observations: TrapperClassificationResultsList = (
             self.trapper.observations.results.get_by_collection(classification_project, collection))
 
-        if progress_callback:
-            progress_callback("getting_observations", state="end")
+        _notify("getting_observations", state="end", set_total=True, total=len(observations.results))
 
         self.logger.debug(
             f"Obtained {len(observations.results)} observations from classification project  {classification_project} and collection {collection}")
 
-        if progress_callback:
-            progress_callback("filtering_observations", state="start", description=f"Filtering classified observations...")
+        _notify("filtering_observations", state="start", description=f"Filtering classified observations...")
 
         filtered_observations = [
             obs for obs in observations.results
@@ -144,40 +145,32 @@ class TrapperZooniverseConnector:
             }
         )
 
-        if progress_callback:
-            progress_callback("filtering_observations", state="end")
+        _notify("filtering_observations", state="end", set_total=True, total=len(observations.results))
 
         self.logger.debug(
             f"Obtained {len(observations.results)} observations after filtering from classification project  {classification_project} and collection {collection}")
 
-        if progress_callback:
-            progress_callback("getting_url", state="start", description=f"Getting url for medias classified...")
+        _notify("getting_url", state="start", description=f"Getting url for medias classified...")
 
         media_map=self._merge_media_and_observations(media,observations)
+        public_media_map = {media_id: entry for media_id, entry in media_map.items() if entry.filePublic}
 
         self.logger.debug(
-            f"Obtained {len(media_map.keys())} observations_media from classification project  {classification_project} and collection {collection}")
+            f"Obtained {len(public_media_map.keys())} observations_media from classification project  {classification_project} and collection {collection}")
 
         if len(media_map.keys()) == 0:
             self.logger.debug(f"No valid observations found for collection {collection} and classification project {classification_project}.")
 
-        if progress_callback:
-            progress_callback("getting_url", state="end")
-
-        if progress_callback:
-            progress_callback("preparing_sequences", state="start", description=f"Preparing sequences...")
+        _notify("getting_url", state="end", set_total=True, total=len(public_media_map.keys()))
+        _notify("preparing_sequences", state="start", description=f"Preparing sequences...")
 
         self.logger.debug("Preparando las secuencias")
 
-        sequences = self._generate_zoo_images_from_media_map(media_map, max_interval, n_images_seq)
-
-        if progress_callback:
-            progress_callback("preparing_sequences", state="end")
+        sequences = self._generate_zoo_images_from_media_map(public_media_map, max_interval, n_images_seq)
+        _notify("preparing_sequences", state="end", set_total=True, total=len(sequences))
 
         total = sum(len(sequence) for sequence in sequences)
-
-        if progress_callback:
-            progress_callback("download_images", state="start", description=f"Downloading {total} images...",
+        _notify("download_images", state="start", description=f"Downloading {total} images...",
                               total=total, set_total=True)
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -187,19 +180,19 @@ class TrapperZooniverseConnector:
 
                 for media in seq:
                     # Excluir si es privada
-                    if not media.get("filePublic", False):
-                        self.logger.warning(f"Excluyendo imagen privada {media['mediaID']} {media['filePath']}")
-                        report.add_error(f"{media['mediaID']}@media", "select","skipped_private")
-                        continue
+                    #if not media.get("filePublic", False):
+                    #    self.logger.warning(f"Excluyendo imagen privada {media['mediaID']} {media['filePath']}")
+                    #    report.add_error(f"{media['mediaID']}@media", "select","skipped_private")
+                    #    continue
 
-                    # Excluir si no es animal (solo para secuencias intermedias)
-                    if not is_first and not is_last:
-                        obs_types = media.get("observationTypes", [])
-                        if any(o.lower() != "animal" for o in obs_types):
-                            self.logger.warning(
-                                f"Excluyendo {media['mediaID']} {media['filePath']} con tipos {media['observationTypes']}")
-                            report.add_error(f"{media['mediaID']}@media", "select","skipped_human")
-                            continue
+                    # Excluir si es humano (solo para secuencias intermedias)
+                    #if not is_first and not is_last:
+                    #    obs_types = media.get("observationTypes", [])
+                    #    if any(o.lower() == "human" for o in obs_types):
+                    #        self.logger.warning(
+                    #            f"Excluyendo {media['mediaID']} {media['filePath']} con tipos {media['observationTypes']}")
+                    #        report.add_error(f"{media['mediaID']}@media", "select","skipped_human")
+                    #        continue
 
                     name = self._get_zoo_filename(media)
                     local_path = os.path.join(temp_dir, name)
@@ -207,21 +200,25 @@ class TrapperZooniverseConnector:
                     self.logger.debug(
                         f"Descargando {media['mediaID']} ({media['filePath']}) a {local_path}")
 
-                    if progress_callback:
-                        progress_callback("download_images"
+                    _notify("download_images"
                                           , state="running"
                                           , advance=0
                                           , item_name=media['mediaID']
                                           , item_status="start")
 
                     try:
-                        self._download_image(str(media['filePath']), local_path, attempts=5, delay_seconds=60)
+                        self.trapper.media.download(classification_project, media['mediaID'],
+                                                    destination_folder=Path(temp_dir),
+                                                    filename_overwrite=name)
+
+                        #def download(self, cp_id: int, m_id:Union[int, "TrapperMedia"], destination_folder: Path, filename_overwrite:str=None) -> Path:
+
+                        #self._download_image(str(media['filePath']), local_path, attempts=5, delay_seconds=60)
                         origin = f"{self.trapper.base_url}:media:{media['mediaID']}"
                         metadata[name] = {"origin":origin}
                         report.add_success(f"{media['mediaID']}@media", "download",**{"path":local_path})
 
-                        if progress_callback:
-                            progress_callback("download_images"
+                        _notify("download_images"
                                               , state="running"
                                               , advance=1
                                               , item_name=media['mediaID']
@@ -234,15 +231,14 @@ class TrapperZooniverseConnector:
                                           str(e),
                                           **{"path":str(media['filePath'])})
 
-                        if progress_callback:
-                            progress_callback("download_images"
+                        _notify("download_images"
                                               , state="running"
                                               , advance=1
                                               , item_name=media['mediaID']
                                               , item_status="fail")
 
-            if progress_callback:
-                progress_callback("download_images", state="end")
+            _notify("download_images", state="end")
+
             # Subir a Zooniverse
             file_paths = [
                 os.path.join(temp_dir, f)
@@ -252,8 +248,7 @@ class TrapperZooniverseConnector:
             self.logger.debug(f"Creando SubjectSet {subjectset_name} en Zooniverse")
             subjectset = self.zoo.subjectsets.create(subjectset_name)
 
-            if progress_callback:
-                progress_callback("uploaded_images"
+            _notify("uploaded_images"
                                   , state="start"
                                   , description=f"Uploading {len(file_paths)} images to Zooniverse {subjectset}..."
                                   , total=len(file_paths)
@@ -280,8 +275,7 @@ class TrapperZooniverseConnector:
                 create_subjects_progress_callback
             )
 
-            if progress_callback:
-                progress_callback("uploaded_images", state="end")
+            _notify("uploaded_images", state="end")
 
             for success in ok:
                 import re
@@ -564,10 +558,14 @@ class TrapperZooniverseConnector:
         import json
         return (json.dumps(sequences, indent=4, default=default_serializer))
 
-    def _generate_zoo_images_from_media_map(self, media_map: Dict[str, MediaObservationEntry], max_interval, n_images_seq) -> List[Dict[str, Any]]:
-        """Genera las imágenes que se subirán a Zooniverse a partir de un media_map."""
-        #print(media_map)
-        #self.logger.debug(("Convirtiendo timestamps"))
+    def _generate_zoo_images_from_media_map(self, media_map: Dict[str, MediaObservationEntry], max_interval : int,
+            n_images_seq:int, filter_middle_humans: bool =True) -> List[Dict[str, Any]]:
+        """
+        Given a set of media and its observations, generates a set of images sequences. Each sequence is a list of images
+        taken within max_interval seconds. Each sequences is unifoerm sampling of n_images_seq images from the sequence.
+
+        """
+
         rows = self._convert_timestamps_from_media_map(media_map)
         self.logger.debug(("Agrupando media por deployment"))
         grouped = self._group_by_deployment(rows)
@@ -595,7 +593,11 @@ class TrapperZooniverseConnector:
             sequences.append(current_seq)
             #self.logger.debug(f"Secuencias obtenidas {len(sequences)}: {self._show_sequences_as_json(sequences)}")
             self.logger.debug(f"Secuencias obtenidas {len(sequences)}")
-            self.logger.debug(f"Muestreando secuencias...")
+
+            if filter_middle_humans:
+                self.logger.debug(f"Filtering humans...")
+                sequences = self._filter_human_media_from_middle_sequences(sequences)
+
 
             # Muestreamos cada scuencias
             for seq in sequences:
@@ -607,6 +609,36 @@ class TrapperZooniverseConnector:
             #self.logger.debug(f"Secuencias muestreadas {self._show_sequences_as_json(sampled_sequences)}")
 
         return sampled_sequences
+
+    def _filter_human_media_from_middle_sequences(
+        self, sequences: List[List[Dict[str, Any]]]
+    ) -> List[List[Dict[str, Any]]]:
+        """
+        Elimina los medias clasificados como 'human' de las secuencias intermedias.
+        La primera y la última secuencia se mantienen intactas.
+        """
+
+        if len(sequences) <= 2:
+            return sequences
+
+        filtered_sequences = []
+
+        for i, seq in enumerate(sequences):
+            # Primera y última secuencia → intactas
+            if i == 0 or i == len(sequences) - 1:
+                filtered_sequences.append(seq)
+                continue
+
+            # Secuencias intermedias → eliminar medias con 'human'
+            filtered_seq = [
+                media
+                for media in seq
+                if not ("observations" in media and media["observations"] and "human" in media["observations"])
+            ]
+
+            filtered_sequences.append(filtered_seq)
+
+        return filtered_sequences
 
     def _sample_sequence(self, rows: List[Dict], n_images_seq) -> List[Dict]:
         """Selecciona un subconjunto de imágenes distribuidas uniformemente."""

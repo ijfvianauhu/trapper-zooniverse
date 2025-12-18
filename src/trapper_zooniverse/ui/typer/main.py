@@ -3,6 +3,7 @@ import sys
 
 import requests
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.prompt import Confirm
 
 from trapper_zooniverse.ZooniverseClient import ZooniverseClient
 from trapper_zooniverse.ui.typer.i18n import _, setup_locale
@@ -426,9 +427,22 @@ def upload_collection(
 
     logger.debug(_(f"Found {len(results[0].results)} classification projects and {len(results[1].results)} research projects for collection {collection}"))
 
-    cp_selected,_ = TyperUtils.select_from_list(results_cp)
-    rp_selected,_ = TyperUtils.select_from_list(results_rp)
+    cp_selected,nothing = TyperUtils.select_from_list(results_cp)
+    rp_selected,nothing = TyperUtils.select_from_list(results_rp)
     TyperUtils.success(f"You selected classification project {cp_selected.name} (ID: {cp_selected.pk}) and research project {rp_selected.name} (ID: {rp_selected.pk})")
+
+    medias = trapper_client.media.get_by_collection(cp_selected.pk,collection)
+
+    hay_privados = any(not media.filePublic for media in medias.results)
+
+    if hay_privados:
+        continue_process = Confirm.ask(
+            f"Collection {collection} contains private items; they will be removed from any selection process. Do you want to continue?"
+        )
+
+        if not continue_process:
+            TyperUtils.warning("Operation canceled by the user.")
+            raise typer.Exit(code=1)
 
     if subjectset_name == None:
         c = trapper_client.collections.get_by_id(collection)
@@ -447,95 +461,30 @@ def upload_collection(
     )
 
     connector = TrapperZooniverseConnector(zoo=zooniverse_client,trapper=trapper_client)
+    import trapper_zooniverse.ui.typer.zooniverse
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-    ) as progress:
-
-        # Registro dinámico de tareas
-        task_registry = {}
-
-        def get_or_create_task(task_name: str, total=None, description=None):
-            """
-            Crea la tarea si no existe. Si existe, la devuelve.
-            """
-            if task_name not in task_registry:
-                desc = description or task_name.replace("_", " ").title()
-                task_id = progress.add_task(desc, total=total)
-                task_registry[task_name] = task_id
-            return task_registry[task_name]
-
-        def progress_callback(
-            task_name: str,
-            state: str,
-            advance: int = 1,
-            total: int | None = None,
-            description: str | None = None,
-            set_total: bool = False,
-            item_name:str = None,
-            item_status: Literal["start", "end", "fail"] | None = None,
-        ):
-            """
-            Callback flexible que soporta:
-            - tareas determinadas   (con total)
-            - tareas indeterminadas (total=None)
-            - cambio de total a posteriori
-            - añadir descripciones personalizadas
-            """
-            task_id = get_or_create_task(task_name, total, description)
-
-            # --- Estados ---
-            if state == "start":
-                new_desc = f"🟢  {description or task_name.replace('_', ' ').title()}"
-                progress.update(task_id, description=new_desc)
-
-            elif state == "end":
-                new_desc = f"✔️  {description or task_name.replace('_', ' ').title()}"
-                progress.update(task_id, completed=progress.tasks[task_id].total or 1,
-                                description=new_desc)
-                progress.stop_task(task_id)
-
-            elif state == "fail":
-                new_desc = f"❌  {description or task_name.replace('_', ' ').title()}"
-                progress.update(task_id, description=new_desc)
-                return  # no seguir avanzando
-
-            if set_total and total is not None:
-                progress.update(task_id, total=total)
-
-            if item_name is not None:
-                if item_status == "start":
-                    progress.log(f"[yellow]→ Starting processing item {item_name}")
-                elif item_status == "end":
-                    progress.log(f"[green]✓ Finished processing item {item_name}")
-                elif item_status == "fail":
-                    progress.log(f"[red]✗ Failed processing {item_name}")
-
-            progress.advance(task_id, advance)
-
-        # Ejecuta tu función pasándole el callback
-        report = connector.upload_collection(
+    try:
+        report = trapper_zooniverse.ui.typer.zooniverse.upload_collection(
+            tzc = connector,
             subjectset_name=subjectset_name,
             collection=collection,
-            classification_project=cp_selected.pk,
-            uploaded_file=None,
+            cproject=cp_selected.pk,
             n_images_seq=n_images_seq,
             max_interval=max_interval,
             attempts=attempts,
             delay=delay,
             max_attempts_per_subject=max_attempts_per_subject,
             delay_seconds_per_subject=delay_seconds_per_subject,
-            progress_callback=progress_callback
         )
 
-    report_file = TyperUtils.report_save(report)
-    TyperUtils.console.print("\n")
-    TyperUtils.report_display(report)
-    TyperUtils.success(_(f"Report saved at: {report_file}"))
+        TyperUtils.success(f"Collection {collection} uploaded to Zooniverse subject set '{subjectset_name}'")
+        report_file = TyperUtils.report_save(report)
+        TyperUtils.console.print("\n")
+        TyperUtils.report_display(report)
+        TyperUtils.success(_(f"Report saved at: {report_file}"))
+
+    except Exception as e:
+        TyperUtils.error(f"Error uploading collection {collection}: {str(e)}")
 
 @app.command("annotations-upload",
     short_help=_("Upload all annotations from a Zooniverse subject set to a Trapper classification project"),
@@ -621,21 +570,20 @@ def public_annotations(
         observations_file = Path(temp_file.name)
 
     try:
-        results = connector.upload_annotations(ss_selected.id, wf_selected.id, col_selected.pk, cp_selected.pk, observations_file,
-                                                None, None)
-        #results = TyperUtils.run_tasks_with_progress(
-        #    [
-        #        {
-        #            "description": _(f"Uploading Zooniverse Annotations to Trapper"),
-        #            "func": connector.upload_annotations,
-        #            "args": (subjectset_id, wf.id, collection_id, cp_selected.pk, observations_file, observation_mapping, species_mapping),
-        #        },
-        #    ]
-        #)
-        TyperUtils.success(f"Annotations uploaded to Trapper and saved in {observations_file}")
-        report = results
-        report_dir=TyperUtils.report_save(report)
+        import trapper_zooniverse.ui.typer.zooniverse
+
+        results = trapper_zooniverse.ui.typer.zooniverse.public_annotations(connector,
+            cp_id=cp_selected.pk,
+            collection_id=col_selected.pk,
+            subjectset_id=ss_selected.id,
+            wf_id=wf_selected.id,
+            observations_file=observations_file
+        )
+        url = f"{connector.trapper.base_url}media_classification/classification/import/"
+        TyperUtils.success(f"Annotations file saved in {observations_file}. Uppload it to Trapper using {url}")
+        report_dir=TyperUtils.report_save(results)
         TyperUtils.success(_(f"Report saved at: {report_dir}"))
+        TyperUtils.report_display(results)
 
     except Exception as e:
         TyperUtils.fatal(str(e))

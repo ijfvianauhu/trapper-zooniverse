@@ -235,6 +235,24 @@ class Report:
 
         return sorted(actions)
 
+    def extend(self, other: "Report") -> None:
+        """
+        Copia errores y éxitos de otro informe dentro del actual.
+        """
+        if not isinstance(other, Report):
+            raise TypeError("solo se puede extender con otra instancia Report")
+
+        for identifier, entries in other.errors.items():
+            self.errors.setdefault(identifier, []).extend(entries)
+
+        for identifier, entries in other.successes.items():
+            self.successes.setdefault(identifier, []).extend(entries)
+
+        if other.start_time and other.start_time < self.start_time:
+            self.start_time = other.start_time
+        if other.end_time:
+            self.end_time = max(filter(None, [self.end_time, other.end_time]))
+
     def summary(self) -> str:
         """
         Generates a human-readable summary of the report, including timestamps,
