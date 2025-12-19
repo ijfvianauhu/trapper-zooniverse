@@ -6,6 +6,7 @@ import logging, os
 import tempfile
 
 from pydantic import BaseModel, validator, HttpUrl
+from tenacity import stop_after_attempt, wait_fixed, before_sleep_log, retry
 from trapper_client import Schemas
 from trapper_client.TrapperClient import TrapperClient
 from trapper_client.Schemas import TrapperMediaList, TrapperObservationList, Pagination, \
@@ -102,7 +103,9 @@ class TrapperZooniverseConnector:
         _notify("getting_media", state="start",
                               description=f"Getting media for classification project {classification_project} and collection {collection}...")
 
-        media:TrapperMediaList=self.trapper.media.get_by_collection(classification_project, collection)
+        media :TrapperMediaList = self.trapper.media.get_by_collection(
+            classification_project, collection, {"private_human": "False", "private_vehicle": "False"}
+        )
         _notify("getting_media", state="end", set_total=True, total=len(media.results))
 
         self.logger.debug(
@@ -153,6 +156,7 @@ class TrapperZooniverseConnector:
         _notify("getting_url", state="start", description=f"Getting url for medias classified...")
 
         media_map=self._merge_media_and_observations(media,observations)
+
         public_media_map = {media_id: entry for media_id, entry in media_map.items() if entry.filePublic}
 
         self.logger.debug(
@@ -170,6 +174,7 @@ class TrapperZooniverseConnector:
         _notify("preparing_sequences", state="end", set_total=True, total=len(sequences))
 
         total = sum(len(sequence) for sequence in sequences)
+
         _notify("download_images", state="start", description=f"Downloading {total} images...",
                               total=total, set_total=True)
 
@@ -207,13 +212,11 @@ class TrapperZooniverseConnector:
                                           , item_status="start")
 
                     try:
-                        self.trapper.media.download(classification_project, media['mediaID'],
-                                                    destination_folder=Path(temp_dir),
-                                                    filename_overwrite=name)
+                        ok = self._download_image(str(media['filePath']), str(Path(temp_dir) / name))
 
-                        #def download(self, cp_id: int, m_id:Union[int, "TrapperMedia"], destination_folder: Path, filename_overwrite:str=None) -> Path:
+                        if not ok:
+                            raise Exception(f"Failed to download image from {media['filePath']}.")
 
-                        #self._download_image(str(media['filePath']), local_path, attempts=5, delay_seconds=60)
                         origin = f"{self.trapper.base_url}:media:{media['mediaID']}"
                         metadata[name] = {"origin":origin}
                         report.add_success(f"{media['mediaID']}@media", "download",**{"path":local_path})
@@ -476,17 +479,16 @@ class TrapperZooniverseConnector:
 
         return ExtractorClass, VoterClass
 
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_fixed(60),
+        reraise=False,
+        before_sleep=before_sleep_log(logging.getLogger(__name__), logging.WARNING),
+    )
     def _download_image(self, url: str, dest_path: str, attempts=5, delay_seconds=60) -> bool:
         """Descarga una imagen desde una URL con reintentos."""
-        for attempt in range(attempts):
-            try:
-                urllib.request.urlretrieve(url, dest_path)
-                return True
-            except Exception as e:
-                self.logger.error(f"Error downloading {url} (attempt {attempt + 1}/{attempts}): {e}")
-                if attempt < attempts - 1:
-                    time.sleep(delay_seconds)
-        return False
+        urllib.request.urlretrieve(url, dest_path)
+        return True
 
     def _merge_media_and_observations( self,
             media :TrapperMediaList,
@@ -541,6 +543,10 @@ class TrapperZooniverseConnector:
                         media_map[obs.mediaID].observations.append(obs_type)
             else:
                 self.logger.warning(f"No  encontré información sobre el media {media_id} asociado a la observacion")
+
+        if len(media_ids - set(media_map.keys())) > 0 :
+            self.logger.debug("Hay media sin observaciones aprobadas")
+
         return media_map
 
     def _show_sequences_as_json(self,sequences):

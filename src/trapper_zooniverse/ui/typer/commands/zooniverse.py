@@ -174,8 +174,16 @@ def upload_collection(
     cp_selected,nothing = TyperUtils.select_from_list(results_cp)
     rp_selected,nothing = TyperUtils.select_from_list(results_rp)
     TyperUtils.success(f"You selected classification project {cp_selected.name} (ID: {cp_selected.pk}) and research project {rp_selected.name} (ID: {rp_selected.pk})")
+    """
+    "trapper_url": query_params.get("trapper_url", "True") == "True",
+    "trapper_url_token": query_params.get("trapper_url_token", "True")
+    == "True",
+    "private_human": query_params.get("private_human", "True") == "True",
+    "private_vehicle": query_params.get("private_vehicle", "True") == "True",
+    "private_species": query_params.getlist("private_species", []),
+    """
 
-    medias = trapper_client.media.get_by_collection(cp_selected.pk,collection)
+    medias = trapper_client.media.get_by_collection(cp_selected.pk,collection, {"private_human" : "False", "private_vehicle" : "False"})
 
     hay_privados = any(not media.filePublic for media in medias.results)
 
