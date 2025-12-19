@@ -62,12 +62,16 @@ class Workflow29186AnnotationExtractor(AnnotationsExtractor):
             pattern = r"'choice':\s*'([^']+)'.*?'answers':\s*(\{[^}]*\})"
             # get all choice, answers pairs
             matches = re.findall(pattern, str(classifications_x_user.annotations))
+
+            if len(matches) == 0 or len(matches) > k_max:
+                logger.debug("Skipping classification due to no matches or exceeding k_max")
+                continue
+
             # total of choices for this user classification
             k_list.append(len(matches))
             sid = classifications_x_user.sid
 
             results = [(choice, ast.literal_eval(answers)) for choice, answers in matches]
-            #results = [(trapper_name(choice), ast.literal_eval(answers)) for choice, answers in matches]
             choices.extend(results)
 
         logger.debug(f"valores de k {k_list}")

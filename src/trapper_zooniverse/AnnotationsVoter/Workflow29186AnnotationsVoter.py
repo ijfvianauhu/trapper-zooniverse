@@ -1,12 +1,11 @@
 import math
 from statistics import median
-from typing import List, Any
+from typing import Any
 from collections import Counter, defaultdict
-from typing import List, Tuple, Optional
+from typing import List, Optional
 
 from trapper_zooniverse.AnnotationsVoter.AnnotationsVoter import AnnotationsVoter
 from trapper_zooniverse.Schemas import Zoo2TrapperObservation
-
 
 class Workflow29186AnnotationsVoter(AnnotationsVoter):
 
@@ -35,10 +34,10 @@ class Workflow29186AnnotationsVoter(AnnotationsVoter):
             else:
                 species_howmany[species].append(None)
 
-        # Contar votos por especie
-        species_count = Counter(species for species, _ in user_opinions)
+        # Contar votos por especie, si k > 1 no tenemos en cuenta NOANIMAL
+        species_count = Counter(species for species, _ in user_opinions if not (k > 1 and species == "NOANIMAL"))
         sorted_species = species_count.most_common()
-        top_k_species = sorted_species[: max(1, k)]
+        top_k_species = sorted_species[: max(1, k+1)]
 
         result = []
 
@@ -66,18 +65,6 @@ class Workflow29186AnnotationsVoter(AnnotationsVoter):
                 observationType = species
             else:
                 observationType = "animal"
-
-            """result.append(
-                {
-                    "observationType": observationType,
-                    "species": species,
-                    "votes": votes,
-                    "rank": idx + 1,
-                    "votes_next": votes_next,
-                    "confidence": confidence,
-                    "howmany_median": howmany_median,
-                }
-            )"""
 
             obs = Zoo2TrapperObservation(
                 observationType=observationType,

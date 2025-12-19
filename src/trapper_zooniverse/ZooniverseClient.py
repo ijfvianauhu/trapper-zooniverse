@@ -291,7 +291,16 @@ class SubjectSetsComponent(ZooniverseClientComponent):
             _notify("start", sid, f"Downloading subject {name}", None)
             try:
                 s_cmp = SubjectsComponent(self.client)
-                path = s_cmp.download(sid, save_path=str(output_folder))
+
+                @retry(
+                    stop=stop_after_attempt(3),
+                    wait=wait_exponential(multiplier=5, min=5, max=60),
+                    reraise=True,
+                )
+                def _download_with_retry():
+                    return s_cmp.download(sid, save_path=str(output_folder))
+
+                path = _download_with_retry()
                 report.add_success(sid, "download", str(path))
                 self.client.logger.debug(f"Sending end notification for subjet  {subj}")
                 _notify("end", sid, f"Download completed successfully in {str(path)}")
@@ -344,127 +353,137 @@ class SubjectsComponent(ZooniverseClientComponent):
         # Return the subjects as a list
         return list(subject_set.subjects)
 
-    def create(self, path: str, subject_set, metadata=None, attempts=5, delay_seconds=60):
+    def create(self, path: str, subject_set : SubjectSet, metadata : Dict =None, attempts: int = 5
+               , delay_seconds: int = 60):
         """
-        Try to upload a subject to Zooniverse with exponential backoff retries.
+        Upload a single subject to a Zooniverse SubjectSet with retries.
 
-        Parameters
-        ----------
-        path : str
-            Local path to the image file.
-        subject_set : SubjectSet
-            The Zooniverse SubjectSet to which the subject will be added.
-        attempts : int, optional
-            Maximum number of attempts before giving up.
-        delay_seconds : int, optional
-            Base delay (in seconds) between retries. Each retry doubles this delay.
-
-        Returns
-        -------
-        Subject | None
-            The uploaded Subject if successful, otherwise None.
+        :param path: Path to the file to upload.
+        :param subject_set: Instance of SubjectSet to which the subject will be added.
+        :param metadata: Optional metadata dictionary to attach to the subject.
+        :param attempts: Number of retry attempts.
+        :param delay_seconds: Delay in seconds between retries.
+        :return: The created Subject instance, or None if upload failed.
         """
         self.client._ensure_connection()
 
-        for attempt in range(1, attempts + 1):
-            try:
-                self.client.logger.debug(f"[Attempt {attempt}/{attempts}] Uploading... {path}")
-                subject = Subject()
-                subject.links.project = self.client.project_id
-                subject.metadata['Filename'] = os.path.basename(path)
-                if metadata :
-                    subject.external_id = metadata.get("origin", None)
-                    for k, v in metadata.items():
-                        subject.metadata[k] = v
-                subject.add_location(path)
-                subject.save()
-                self.client.logger.debug(f"✅ Successfully uploaded {path}")
-                subject_set.add(subject)
-                return subject
-            except Exception as e:
-                self.client.logger.error(f"Error uploading path {e}")
-                if attempt < attempts:
-                    wait_time = delay_seconds * (2 ** (attempt - 1))
-                    time.sleep(wait_time)
+        @retry(
+            stop=stop_after_attempt(attempts),
+            wait=wait_exponential(multiplier=delay_seconds, min=delay_seconds),
+            reraise=True,
+        )
+        def _upload_subject():
+            retry_state = _upload_subject.retry.statistics
+            attempt_number = retry_state.get("attempt_number", 1)
+            self.client.logger.debug(f"[Attempt {attempt_number}/{attempts}] Uploading... {path}")
 
-        return None
+            subject = Subject()
+            subject.links.project = self.client.project_id
+            subject.metadata["Filename"] = os.path.basename(path)
 
-    def create_bulk(self, file_paths, subject_set:SubjectSet, metadata=None, attempts=5, delay=15,
-                    max_attempts_per_subject=5, delay_seconds_per_subject=30, callback: callable = None):
+            if metadata:
+                subject.external_id = metadata.get("origin", "")
+                for k, v in metadata.items():
+                    subject.metadata[k] = v
+
+            subject.add_location(path)
+            subject.save()
+            subject_set.add(subject)
+            self.client.logger.debug("✅ Successfully uploaded %s", path)
+            return subject
+
+        try:
+            return _upload_subject()
+        except Exception as exc:
+            self.client.logger.error("Error uploading %s after %s attempts: %s", path, attempts, exc)
+            return None
+
+    def create_bulk(self, file_paths : List[str], subject_set: SubjectSet, metadata : Dict =None,
+        attempts:int = 5, delay : int = 15, max_attempts_per_subject=5, delay_seconds_per_subject : int =30,
+        callback: callable = None,
+    ) -> Tuple[List[Dict], List[str]]:
         """
         Upload multiple subjects to a Zooniverse SubjectSet with batch-level retries.
         If any uploads fail, retries only those in subsequent rounds, with increasing delay.
-
-        Parameters
-        ----------
-        file_paths : list[str]
-            Paths to the image files to upload.
-        subject_set : SubjectSet
-            The Zooniverse SubjectSet to which subjects will be added.
-        metadata : dict, optional
-            Optional metadata to attach to each subject.
-        attempts : int, optional
-            Maximum number of retry rounds for failed uploads.
-        delay : int, optional
-            Initial wait time between retry rounds (in seconds).
-        max_attempts_per_subject : int, optional
-            Maximum number of upload attempts per subject.
-        delay_seconds_per_subject : int, optional
-            Delay between uploads of individual subjects (in seconds).
-
-        Returns
-        -------
-        dict
-            {
-                "subjects": List[Subject],  # Successfully uploaded subjects
-                "failed": List[str]          # Files that failed after all attempts
-            }
+        :param file_paths: List of file paths to upload.
+        :param subject_set: Instance of SubjectSet to which subjects will be added.
+        :param metadata: Optional dictionary mapping filenames to metadata dictionaries.
+        :param attempts: Number of total batch retry attempts.
+        :param delay: Base delay in seconds between batch retry attempts.
+        :param max_attempts_per_subject: Max attempts per individual subject upload.
+        :param delay_seconds_per_subject: Delay in seconds between individual subject upload retries.
+        :param callback: Optional callback function for progress notifications.
+        :return: Tuple[List[Dict], List[str]] of successfully uploaded subjects and failed file paths.
         """
         self.client._ensure_connection()
+
+        class _BulkUploadRetry(Exception):
+            def __init__(self, remaining):
+                self.remaining = remaining
+
         remaining_files = list(file_paths)
         all_subjects = []
         failed_files = []
 
-        for attempt in range(1, attempts + 1):
-            self.client.logger.debug(f"[Attempt {attempt}/{attempts}] Uploading subjects...")
+        @retry(
+            stop=stop_after_attempt(attempts),
+            wait=wait_exponential(multiplier=delay, min=delay),
+            retry=retry_if_exception_type(_BulkUploadRetry),
+            reraise=True,
+        )
+        def _run_round():
+            nonlocal remaining_files
+            attempt_number = _run_round.retry.statistics.get("attempt_number", 1)
+            self.client.logger.debug(f"[Attempt {attempt_number}/{attempts}] Uploading subjects...")
             current_failed = []
 
             for path in remaining_files:
+                file_meta = metadata.get(os.path.basename(path)) if metadata else None
 
                 if callback:
-                    callback(path, 'start', None)  # Antes de empezar
+                    callback(path, "start", None)
 
-                subject = self.create(path,
-                                      subject_set,
-                                      metadata[os.path.basename(path)],
-                                      max_attempts_per_subject,
-                                      delay_seconds_per_subject
+                subject = self.create(
+                    path,
+                    subject_set,
+                    file_meta,
+                    max_attempts_per_subject,
+                    delay_seconds_per_subject,
                 )
+
                 if subject:
                     if callback:
-                        callback(path, 'end', None)  # Antes de empezar
+                        callback(path, "end", None)
                     all_subjects.append({"path": path, "subject_id": subject.id})
                 else:
                     current_failed.append(path)
-            if not current_failed:
-                self.client.logger.debug(("All files uploaded successfully!"))
-                break
 
-            if attempt < attempts:
-                self.client.logger.error(f"Error uploading subjects")
-                wait_time = delay * (2 ** (attempt - 1))
-                time.sleep(wait_time)
-                remaining_files = current_failed  # Volver a intentar sólo las fallidas
-            else:
-                self.client.logger.error(f"Giving up after {attempts} attempts. {len(current_failed)} files failed.")
-                failed_files.extend(current_failed)
+            if current_failed:
+                self.client.logger.error("Error uploading subjects, retrying failed files...")
+                remaining_files = current_failed
+                raise _BulkUploadRetry(current_failed)
+
+        try:
+            _run_round()
+            self.client.logger.debug("All files uploaded successfully!")
+        except _BulkUploadRetry as exc:
+            failed_files.extend(exc.remaining)
+            self.client.logger.error(f"Giving up after {attempts} attempts. {len(exc.remaining)} files failed.")
 
         return (all_subjects, failed_files)
 
-    def download(self, subject_id: int, save_path: str = None, max_retries: int = 3, delay_seconds: int = 5) -> str:
+    def download(self, subject_id: int, save_path: str = None, max_retries: int = 5, delay_seconds: int = 15) -> str:
         """
-        Descarga la imagen principal de un Subject de Zooniverse usando tenacity para reintentos.
+        Download the image associated with a Zooniverse Subject by its ID.
+        :param subject_id: ID of the Subject to download.
+        :param save_path: Optional path to save the downloaded image. If a directory is provided,
+                          the image will be saved with a filename based on subject ID and original filename.
+                          If None, saves in current working directory with a generated filename.
+        :param max_retries: Maximum number of retry attempts for downloading.
+        :param delay_seconds: Base delay in seconds between retry attempts.
+        :return: Path to the downloaded image file.
         """
+
         self.client._ensure_connection()
         self.client.logger.debug(f"Downloading subject: {subject_id}")
 

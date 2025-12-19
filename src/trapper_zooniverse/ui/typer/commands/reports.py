@@ -30,7 +30,7 @@ from pathlib import Path
 from trapper_zooniverse.reports import Report
 from trapper_zooniverse.ui.typer.i18n import _
 from trapper_zooniverse.ui.typer.TyperUtils import TyperUtils
-from trapper_zooniverse.ui.typer.settings import SettingsManager
+from trapper_zooniverse.ui.typer.settings_manager import SettingsManager
 
 app = typer.Typer(
     help=_("Manage project configurations"),
@@ -67,12 +67,12 @@ def list(
     :type ctx: typer.Context
     :return: None
     """
-    #settings_manager = ctx.obj.get("setting_manager")
-    #project_name = str(ctx.obj.get("project", "default"))
-    #logger = ctx.obj.get("logger", logging.getLogger(__name__))
+    settings_manager = ctx.obj.get("setting_manager")
+    project_name = str(ctx.obj.get("project", "default"))
+    logger = ctx.obj.get("logger", logging.getLogger(__name__))
 
     results_dir = TyperUtils.get_default_report_dir()
-    TyperUtils.reports_in_directory(results_dir)
+    TyperUtils.print_reports_in_directory(results_dir)
 
 @app.command(help=_("Validate and show current project settings"),
              short_help=_("Validate and show current project settings"))
@@ -103,7 +103,7 @@ def info(ctx: typer.Context,
     results_dir = TyperUtils.get_default_report_dir()
     target_file = _choose_report_file(results_dir, filename)
     report = Report.from_yaml(target_file)
-    TyperUtils.report_display(report, True)
+    TyperUtils.display_report(report, True)
 
 @app.command(help=_("Archive old reports"),
              short_help=_("Archive old reports"))
@@ -166,24 +166,21 @@ def remove(ctx: typer.Context,
     project_name = str(ctx.obj.get("project", "default"))
     logger = ctx.obj.get("logger", logging.getLogger(__name__))
     results_dir = TyperUtils.get_default_report_dir()
-    print("-------------")
 
-    file_names = [
-        f for f in results_dir.iterdir() if f.is_file() and f.name.startswith(".") and f.name.endswith(".yaml")
-    ]
+    files_to_delete = list(results_dir.glob(".*.yaml"))
 
-    if not file_names:
+    if not files_to_delete:
         TyperUtils.warning("No archived file report found.")
         return
 
     TyperUtils.console.print("[bold red]The following files will be deleted:[/bold red]")
-    for f in file_names:
+    for f in files_to_delete:
         TyperUtils.console.print(f"  • {f.name}")
 
     if Confirm.ask("[bold]Do you want to proceed?[/bold]", default=False):
-        for f in file_names:
+        for f in files_to_delete:
             f.unlink()
-            TyperUtils.console.print(f"[green]Deleted:[/green] {f}")
+            TyperUtils.console.print(f"[green]Deleted:[/green] {f.name}")
     else:
         TyperUtils.console.print("[cyan]Operation cancelled.[/cyan]")
 

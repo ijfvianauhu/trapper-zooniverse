@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from queue import Queue, Empty
 from types import SimpleNamespace
-from typing import Annotated, List
+from typing import Annotated, List, Any
 
 from rich.progress import Progress, TimeElapsedColumn, BarColumn, TimeRemainingColumn
 from trapper_client.TrapperClient import TrapperClient
@@ -54,62 +54,18 @@ app = typer.Typer(
     short_help=_("Helpers")
 )
 
-def dynaconf_loader(file_path: str) -> dict:
-    """
-    Load configuration from a JSON string.
+def make_dynaconf_callback(override_mapping: dict | None = None):
+    def callback(ctx, param: typer.CallbackParam, value: Any):
+        return TyperUtils.dynamic_dynaconf_callback(ctx, param, value, override_mapping=override_mapping)
+    return callback
 
-    Note:
-        Despite the name, this function calls ``json.loads`` on ``file_path``,
-        so it expects a JSON string containing the configuration, not a file path.
+override_mapping = {
+    "user": ("GENERAL", "login"),
+    "url": ("GENERAL", "host"),
+    "password": ("GENERAL", "password"),
+}
 
-    :param file_path: JSON string with the configuration.
-    :type file_path: str
-    :return: Deserialized configuration dictionary.
-    :rtype: dict
-    :raises json.JSONDecodeError: If the string is not valid JSON.
-    """
-    return json.loads(file_path)
-
-# Base callback
-base_conf_callback = conf_callback_factory(dynaconf_loader)
-
-def dynamic_dynaconf_callback(ctx, param, value):
-    """
-    Dynamic callback to load configuration values at runtime.
-
-    This callback obtains configuration from ``ctx.obj["settings"]`` and
-    serializes it to pass it to ``base_conf_callback``. It also fills
-    context parameters (``user``, ``url``, ``password``) if they were not
-    provided explicitly.
-
-    :param ctx: Typer/Click context.
-    :type ctx: typer.Context
-    :param param: Parameter associated with the callback.
-    :type param: click.Parameter
-    :param value: Current parameter value.
-    :type value: Any
-    :return: Result of applying ``base_conf_callback``.
-    :rtype: Any
-    """
-    settings = ctx.obj.get("settings", {}).model_dump()
-    json_str = json.dumps(settings, default=str)
-    results = base_conf_callback(ctx, param, json_str)
-
-    mapping = {
-        "trapper_user": ("TRAPPER", "trapper_username"),
-        "trapper_url": ("TRAPPER", "trapper_url"),
-        "trapper_password": ("TRAPPER", "trapper_password"),
-        "zooniverse_username": ("ZOONIVERSE", "zooniverse_username"),
-        "zooniverse_password": ("ZOONIVERSE", "zooniverse_password"),
-        "zooniverse_project_id": ("ZOONIVERSE", "zooniverse_project_id"),
-    }
-
-    for param_name in ctx.params:
-        if ctx.params[param_name] is None and param_name in mapping:
-            section, key = mapping[param_name]
-            ctx.params[param_name] = settings[section][key]
-
-    return results
+callback_with_override = make_dynaconf_callback(override_mapping)
 
 @app.callback()
 def main_callback(ctx: typer.Context):
@@ -132,7 +88,7 @@ def annotations(
     workflow_id: Annotated[int, typer.Argument(help=("Filter annotations by workflow"))] = None,
     subjectset: Annotated[int, typer.Option(help=("Filter annotations by workflow"))] = None,
     config: Annotated[
-        Path, typer.Option(hidden=True, help=_("File to save the report"), callback=dynamic_dynaconf_callback)
+        Path, typer.Option(hidden=True, help=_("File to save the report"), callback=callback_with_override)
     ] = None,
 ):
     """
@@ -184,7 +140,7 @@ def test_connection(ctx: typer.Context,
                         typer.Option(
                             hidden=True,
                             help=_("File to save the report"),
-                            callback=dynamic_dynaconf_callback
+                            callback=callback_with_override
                         )
                     ] = None,
     ):
@@ -237,7 +193,7 @@ def workflows(ctx: typer.Context,
                   typer.Option(
                       hidden=True,
                       help=_("File to save the report"),
-                      callback=dynamic_dynaconf_callback
+                      callback=callback_with_override
                   )
               ] = None,
   ):
@@ -288,7 +244,7 @@ def subjectsets(ctx: typer.Context,
         typer.Option(
             hidden=True,
             help=_("File to save the report"),
-            callback=dynamic_dynaconf_callback
+            callback=callback_with_override
         )
     ] = None,
 ):
@@ -327,7 +283,7 @@ def collections(ctx: typer.Context,
               typer.Option(
                   hidden=True,
                   help=_("File to save the report"),
-                  callback=dynamic_dynaconf_callback
+                  callback=callback_with_override
               )
           ] = None,
 ):
@@ -360,7 +316,7 @@ def classification_projects(ctx: typer.Context,
               typer.Option(
                   hidden=True,
                   help=_("File to save the report"),
-                  callback=dynamic_dynaconf_callback
+                  callback=callback_with_override
               )
           ] = None,
 ):
@@ -400,7 +356,7 @@ def subjects(ctx: typer.Context,
           typer.Option(
               hidden=True,
               help=_("File to save the report"),
-              callback=dynamic_dynaconf_callback
+              callback=callback_with_override
           )
       ] = None,
 ):
@@ -445,7 +401,7 @@ def download_ss(ctx: typer.Context,
       typer.Option(
           hidden=True,
           help=_("File to save the report"),
-          callback=dynamic_dynaconf_callback
+          callback=callback_with_override
       )
     ] = None,
 ):
@@ -524,7 +480,7 @@ def download_medias(ctx: typer.Context,
       typer.Option(
           hidden=True,
           help=_("File to save the report"),
-          callback=dynamic_dynaconf_callback
+          callback=callback_with_override
       )
     ] = None,
 ):
@@ -598,7 +554,7 @@ def deployments(ctx: typer.Context,
               typer.Option(
                   hidden=True,
                   help=_("File to save the report"),
-                  callback=dynamic_dynaconf_callback
+                  callback=callback_with_override
               )
           ] = None,
 ):

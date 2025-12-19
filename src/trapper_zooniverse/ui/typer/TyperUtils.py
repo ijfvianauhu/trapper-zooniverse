@@ -4,7 +4,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Union, List, Optional, Dict, Any, Callable
+from typing import Union, List, Optional, Dict, Any, Callable, Tuple
 from rich.table import Table
 from rich.console import Console
 from rich.prompt import Prompt
@@ -17,10 +17,12 @@ import logging
 import typer
 from pydantic import BaseModel
 import yaml
+from typer_config import conf_callback_factory
 
 from trapper_zooniverse.i18n import _
 from trapper_zooniverse.reports import Report
 from trapper_zooniverse.ui.typer.settings import Settings
+from trapper_zooniverse.ui.typer.settings_manager import SettingsManager
 
 class TyperUtils:
     console = Console()
@@ -58,6 +60,145 @@ class TyperUtils:
         if TyperUtils.logger.isEnabledFor(logging.DEBUG):
             TyperUtils.console.print(f"🐞 {message}")
         TyperUtils.logger.info(message)
+
+    #
+    # Config methods
+    #
+
+    @staticmethod
+    def generate_pydantic_mapping(
+        model: BaseModel, overrides: Dict[str, Tuple[str, str]] | None = None
+    ) -> Dict[str, Tuple[str, str]]:
+        """
+        Generate a mapping {param_name: (section, key)} from a Pydantic model,
+        recursively including nested models.
+
+        :param model: Pydantic model instance
+        :param prefix: Prefix for nested fields
+        :param overrides: Optional dict to override or add mapping
+        :return: Mapping dictionary
+        """
+        mapping = {}
+
+        for section_name, section_field in model.model_fields.items():
+            value = getattr(model, section_name)
+
+            if isinstance(value, BaseModel):
+                for field_name in value.model_fields.keys():
+                    mapping[field_name] = (section_name, field_name)
+            else:
+                # Campos directos en Settings (si hubiera)
+                mapping[section_name] = (section_name, section_name)
+
+        if overrides:
+            mapping.update(overrides)
+
+        return mapping
+
+    # 🔹 Loader que recibe la ruta completa del archivo
+    @staticmethod
+    def dynaconf_loader(file_path: str) -> dict:
+        """
+        Load a Dynaconf-compatible configuration from a JSON string.
+
+        Note:
+            Although its name suggests a path loader, this function expects a JSON
+            string and returns a Python ``dict`` usable by ``typer_config`` and Dynaconf.
+
+        :param file_path: JSON string containing the configuration.
+        :type file_path: str
+        :returns: Parsed configuration dictionary.
+        :rtype: dict
+        :raises json.JSONDecodeError: If the input is not valid JSON.
+        """
+
+        try:
+            return json.loads(file_path)
+        except Exception as e:
+            pass  # Not JSON → try as file path
+
+        # path = Path(file_path + ".toml")
+        path = Path(file_path)
+        # if path.exists() and path.is_file():
+        #logger.debug(f"Loading configuration from {path}")
+        settings_dir = path.parent
+        setting_manager = SettingsManager(settings_dir=settings_dir)
+        settings = setting_manager.load_settings(path.name, True, True)
+        return SettingsManager.to_plain_dict(settings)
+
+        # If path does not exist or is not a file → raise
+        # raise FileNotFoundError(f"Path does not exist or is not a file: {file_path}")
+
+    # 🔹 Callback base
+    base_conf_callback = conf_callback_factory(dynaconf_loader)
+
+    # 🔹 Callback dinámico que usa otro parámetro (base_path)
+    @staticmethod
+    def dynamic_dynaconf_callback(
+        ctx,
+        param: typer.CallbackParam,
+        value: Any,
+        override_mapping: dict | None = None,
+    ):
+        """
+        Dynamic callback that injects runtime defaults into Typer parameters.
+
+        Serializes the runtime settings from ``ctx.obj["settings"]`` and delegates
+        loading to the base configuration callback. It also fills CLI parameters
+        when omitted by the user, using project settings.
+
+        :param ctx: Typer/Click context.
+        :type ctx: typer.Context
+        :param param: Parameter associated with the callback.
+        :type param: click.Parameter
+        :param value: Current value of the processed parameter.
+        :type value: Any
+        :returns: Result of the underlying base configuration callback.
+        :rtype: Any
+        """
+
+        # Load Settings
+
+        if ctx.obj and "settings" in ctx.obj and ctx.obj["settings"] is not None:
+            # Use settings from context
+            settings_dict = SettingsManager.to_plain_dict(ctx.obj["settings"])
+            value = json.dumps(settings_dict, default=str)
+            TyperUtils.base_conf_callback(ctx, param, value)
+        # if value is not None:
+        #    print("por value")
+        # Use the raw value (expected to be a Path)
+        #    settings_dict= base_conf_callback(ctx, param, Path(value))
+        else:
+            base_path = ctx.params.get("settings_dir", ".")
+            file_path = os.path.join(base_path, ctx.params.get("project", "default"))
+            TyperUtils.base_conf_callback(ctx, param, file_path)
+
+        # en ctx.default_map tengo las settings leídas por base_conf_callback
+        settings = ctx.default_map.copy() if ctx.default_map else {}
+        settings_model = Settings(**settings)
+
+        # Guardo las settings si aún no están en ctx.obj
+        if not ctx.obj:
+            ctx.obj = dict()
+
+        if "settings" not in ctx.obj:
+            ctx.obj["settings"] = settings_model
+
+        # A los parámetros les asigno los valores por defecto definidos en las settings si ya no tienen un valor
+        # asignado
+
+        mapping = TyperUtils.generate_pydantic_mapping(settings_model, override_mapping)
+
+        for param_name in ctx.params:
+            if ctx.params[param_name] is None and param_name in mapping:
+                section, key = mapping[param_name]
+                ctx.params[param_name] = settings[section][key]
+
+        return value
+
+    #
+    #
+    #
 
     @staticmethod
     def validate_yaml_file(path: Path):

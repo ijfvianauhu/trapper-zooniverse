@@ -31,7 +31,7 @@ from typing import Optional
 from pathlib import Path
 from trapper_zooniverse.ui.typer.i18n import _
 from trapper_zooniverse.ui.typer.TyperUtils import TyperUtils
-from trapper_zooniverse.ui.typer.settings import SettingsManager, SETTINGS_ORDER
+from trapper_zooniverse.ui.typer.settings_manager import SettingsManager
 
 app = typer.Typer(
     help=_("Manage project configurations"),
@@ -53,7 +53,7 @@ def main_callback(ctx: typer.Context
     pass
 
 @app.command(
-   help=_("Initialize a new project configuration"), 
+   help=_("Initialize a new project configuration"),
    short_help=_("Initialize a new project configuration")
 )
 def init(
@@ -81,13 +81,13 @@ def init(
     :type env_file: bool
     """
     settings_manager = ctx.obj.get("setting_manager")
-    project_name = ctx.obj.get("configuration", "default")
+    project_name     =  str(ctx.obj.get("project", "default"))
     logger = ctx.obj.get("logger", logging.getLogger(__name__))
 
     settings_file = settings_manager.create_project_settings(
         project_name, template, env_file=env_file
     )
-    
+
     TyperUtils.success(_(f"Created project settings at: {settings_file}"))
 
 
@@ -105,7 +105,7 @@ def show(
     :raises ValidationError: If configuration validation fails.
     """
     settings_manager:SettingsManager = ctx.obj.get("setting_manager")
-    project_name = ctx.obj.get("configuration", "default")
+    project_name     =  str(ctx.obj.get("project", "default"))
 
     logger = ctx.obj.get("logger", logging.getLogger(__name__))
 
@@ -116,15 +116,19 @@ def show(
 
     TyperUtils.console.print(f"\nSettings for project '{project_name}':")
 
-    for group in SETTINGS_ORDER:
+    #settings = settings.model_dump()
+
+    """for group in settings_manager.SETTINGS_ORDER:
         if hasattr(settings, group):
             TyperUtils.console.print(f"\n[{group}]")
-            for key in SETTINGS_ORDER[group]:
+            for key in settings_manager.SETTINGS_ORDER[group]:
                 if key == "password":
                     TyperUtils.console.print(f"{key} = [hidden]")
                 else:
                     variable = f"{group}.{key}"
                     TyperUtils.console.print(f"{key} = {getattr(settings, variable, '')}")
+    """
+    TyperUtils.console.print(settings_manager.settings_to_string(settings))
 
 @app.command(help=_("List all available project configurations"), short_help=_("List all available project configurations"))
 def list(ctx: typer.Context):
@@ -138,7 +142,7 @@ def list(ctx: typer.Context):
     :type ctx: typer.Context
     """
     settings_manager:SettingsManager = ctx.obj.get("setting_manager")
-    
+
     """List all available project configurations."""
     projects = settings_manager.list_projects()
     if not projects:
@@ -165,9 +169,9 @@ def edit(ctx: typer.Context, project_name: Annotated[
       :param project_name: Name of the project to edit.
       :type project_name: str
     """
-    
+
     settings_manager:SettingsManager = ctx.obj.get("setting_manager")
-    
+
     try:
         settings_manager.edit_settings(project_name)
         TyperUtils.success(_(f"Settings validated and saved successfully for project '{project_name}'"))
@@ -246,14 +250,14 @@ def set_param(
     :param param_value: New value for the parameter.
     :type param_value: str
     """
+
     settings_manager: SettingsManager = ctx.obj.get("setting_manager")
     project_name = ctx.obj.get("project", project_name)
-
     try:
         settings_manager.set_param(project_name, param_name, param_value)
         settings = settings_manager.load_settings(project_name, validate=True)
         TyperUtils.success(f"Settings {param_name} updated successfully to {param_value} for project '{project_name}'")
-    except ValidationError as e:
+    except Exception as e:
         TyperUtils.fatal(f"Settings validation error: {e}")
 
 if __name__ == "__main__":
