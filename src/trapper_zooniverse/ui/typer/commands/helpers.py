@@ -391,18 +391,14 @@ def subjects(ctx: typer.Context,
 @app.command(
     help=_("Download subjects (images) from a Zooniverse subjetset (alias: dl_ss)."),
     short_help=_("Download a subjectset (alias: dl_ss)"))
-def download_ss(ctx: typer.Context,
+def download_ss(
+    ctx: typer.Context,
     ss_ids: Annotated[List[int], typer.Argument(help=_("Subjectset ID"))] = ...,
     out_put_dir: Annotated[Path, typer.Option(help=_("Directory where the downloaded images will be saved"))] = None,
-    max_workers: Annotated[int, typer.Option(help=_("Maximum number of threads to use"))] = 2,
-
+    max_workers: Annotated[int, typer.Option(help=_("Maximum number of threads to use"))] = 4,
+    overwrite: Annotated[bool, typer.Option(help=_("Maximum number of threads to use"))] = False,
     config: Annotated[
-      Path,
-      typer.Option(
-          hidden=True,
-          help=_("File to save the report"),
-          callback=callback_with_override
-      )
+        Path, typer.Option(hidden=True, help=_("File to save the report"), callback=callback_with_override)
     ] = None,
 ):
     """
@@ -447,11 +443,11 @@ def download_ss(ctx: typer.Context,
 
             report = TyperUtils.progress_bar(
                 zooniverse_client.subjectsets.download,
-                (ss_id, Path(out_put_dir), max_workers),
+                (ss_id, Path(out_put_dir) / str(ss_id), max_workers, overwrite),
                 None,
                 _(f"[cyan]Downloading subjects from subjectset {ss_id}..."),
                 total=total,
-                use_subtasks=True,
+                use_subtasks=False,
             )
 
             TyperUtils.success(_(f"Subjects downloaded successfully in {out_put_dir}!"))

@@ -255,11 +255,11 @@ class SubjectSetsComponent(ZooniverseClientComponent):
         return self.with_results()
 
     def download(self, subject_set_id: int, output_folder: Path,
-                 max_workers: int = 4, callback: callable = None) -> Report:
+                 max_workers: int = 4, overwrite: bool = False,callback: callable = None) -> Report:
 
         self.client._ensure_connection()
         self.client.logger.debug(f"Starting SubjectSet  {subject_set_id} download.")
-
+        print(max_workers)
         report: Report = Report(
             f"Bulk Download Report for subjectset {subject_set_id}, project {self.client.project_id}"
         )
@@ -298,7 +298,7 @@ class SubjectSetsComponent(ZooniverseClientComponent):
                     reraise=True,
                 )
                 def _download_with_retry():
-                    return s_cmp.download(sid, save_path=str(output_folder))
+                    return s_cmp.download(sid, save_path=str(output_folder), overwrite=overwrite)
 
                 path = _download_with_retry()
                 report.add_success(sid, "download", str(path))
@@ -472,7 +472,7 @@ class SubjectsComponent(ZooniverseClientComponent):
 
         return (all_subjects, failed_files)
 
-    def download(self, subject_id: int, save_path: str = None, max_retries: int = 5, delay_seconds: int = 15) -> str:
+    def download(self,  subject_id: Union[int, Subject], save_path: str = None, max_retries: int = 5, delay_seconds: int = 15, overwrite = False) -> str:
         """
         Download the image associated with a Zooniverse Subject by its ID.
         :param subject_id: ID of the Subject to download.
@@ -484,15 +484,18 @@ class SubjectsComponent(ZooniverseClientComponent):
         :return: Path to the downloaded image file.
         """
 
+        subject_obj = subject_id if isinstance(subject_id, Subject) else None
+        sid = subject_obj.id if subject_obj else subject_id
+
         self.client._ensure_connection()
         self.client.logger.debug(f"Downloading subject: {subject_id}")
 
-        # recuperar subject y URL de imagen (como en la versión original)
-        subject = Subject.find(subject_id)
-        if not subject:
-            raise ValueError(f"Subject con ID {subject_id} no encontrado.")
+        if subject_obj is None:
+            subject_obj = Subject.find(sid)
+        if not subject_obj:
+            raise ValueError(f"Subject con ID {sid} no encontrado.")
 
-        locations = subject.locations
+        locations = subject_obj.locations
         if not locations or not isinstance(locations, list):
             raise ValueError(f"Subject {subject_id} no tiene imágenes asociadas.")
 
@@ -500,7 +503,7 @@ class SubjectsComponent(ZooniverseClientComponent):
         if not image_url:
             raise ValueError(f"Subject {subject_id} no tiene URL válida para la imagen.")
 
-        metadata = subject.metadata or {}
+        metadata = subject_obj.metadata or {}
         name_candidates = ["Filename", "filename", "file_name", "name", "display_name"]
         original_filename = None
         for k in name_candidates:
@@ -528,6 +531,10 @@ class SubjectsComponent(ZooniverseClientComponent):
                 target_path = target
 
         target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if target_path.exists() and not overwrite:
+            self.client.logger.debug(f"Skipping download for subject {subject_id}: file already exists.")
+            return str(target_path)
 
         @retry(
             stop=stop_after_attempt(max_retries),
