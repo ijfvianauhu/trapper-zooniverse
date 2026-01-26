@@ -76,7 +76,6 @@ class TrapperZooniverseConnector:
             subjectset_name: str,
             collection:int,
             classification_project:int,
-            uploaded_file,
             n_images_seq=5,
             max_interval=120,
             attempts=5,
@@ -84,7 +83,6 @@ class TrapperZooniverseConnector:
             max_attempts_per_subject=5,
             delay_seconds_per_subject=30,
             progress_callback: Optional[Callable[[str, int], None]] = None, # <--- callback
-            max_workers=8
     ) -> Report:
 
         report = Report(f"Collection {collection} from {self.trapper.base_url}", type="UploadMediaReport" )
@@ -128,9 +126,7 @@ class TrapperZooniverseConnector:
 
         filtered_observations = [
             obs for obs in observations.results
-            if obs.observationType != "unclassified"
-               and obs.classifiedBy is not None
-               and obs.classificationTimestamp is not None
+            if obs.observationType and obs.observationType != "unclassified"
         ]
 
         if len(filtered_observations) == 0:

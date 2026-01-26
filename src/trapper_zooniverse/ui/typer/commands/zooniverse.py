@@ -149,6 +149,8 @@ def upload_collection(
                 "args": (collection,),
             },
 
+            # Needed to set subject name
+
             {
                 "description": _(f"Getting Trapper research projects by collection {collection}"),
                 "func": trapper_client.research_projects.get_by_collection,
@@ -199,6 +201,7 @@ def upload_collection(
             TyperUtils.warning("Operation canceled by the user.")
             raise typer.Exit(code=1)
 
+
     if subjectset_name == None:
         c = trapper_client.collections.get_by_id(collection)
         if len(c.results) == 1:
@@ -214,6 +217,8 @@ def upload_collection(
         username=zooniverse_username,
         password=zooniverse_password,
     )
+
+    #
 
     connector = TrapperZooniverseConnector(zoo=zooniverse_client,trapper=trapper_client)
     import trapper_zooniverse.ui.typer.zooniverse
