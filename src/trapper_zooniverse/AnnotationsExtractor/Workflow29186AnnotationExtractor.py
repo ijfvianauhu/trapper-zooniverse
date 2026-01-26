@@ -22,24 +22,27 @@ class Workflow29186AnnotationExtractor(AnnotationsExtractor):
     """
 
     zoo_to_trapper = {
-        "REDDEER": "Cervus elaphus hispanicus",
+        "NOANIMAL": "blank",
+        "HUMANORVEHICLE": "human",
+        "OTHERSPECIES": "animal",
+        "UNRECOGNIZABLE": "unknown",
+
+        "REDDEER": "Cervus elaphus",
         "REDFOX": "Vulpes vulpes",
         "WILDBOAR": "Sus scrofa",
-        "CERVIDREDORFALLOWDEER": "Capreolus capreolus",
+        "CERVIDREDORFALLOWDEER": "Cervidae",
         "COMMONGENET": "Genetta genetta",
         "COW": "Bos taurus",
         "EGYPTIANMONGOOSE": "Herpestes ichneumon",
         "EUROPEANBADGER": "Meles meles",
         "EUROPEANRABBIT": "Oryctolagus cuniculus",
         "FALLOWDEER": "Dama dama",
-        "HORSE": "Equus (Equus) caballus",
+        "HORSE": "Equus caballus",
         "IBERIANHARE": "Lepus granatensis",
         "IBERIANLYNX": "Lynx pardinus",
-        "LEPORIDRABBITORHARE": "Leporidae",  # ¿¿
-        "NOANIMAL": "human",  # ??
-        "HUMANORVEHICLE": "human",  # ??
-        "OTHERSPECIES": "unknown",  ##??
-        "UNRECOGNIZABLE": "unknown",  # ??
+        "LEPORIDRABBITORHARE": "Leporidae",
+        "BIRD": "Aves",
+        "DOMESTICDOG": "Canis familiaris"
     }
 
     @staticmethod

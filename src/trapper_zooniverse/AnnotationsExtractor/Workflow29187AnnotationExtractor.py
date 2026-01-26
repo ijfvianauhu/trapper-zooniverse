@@ -22,33 +22,33 @@ class Workflow29186AnnotationExtractor(AnnotationsExtractor):
     """
 
     zoo_to_trapper = {
+        "NOANIMAL": "blank",
+        "HUMANORVEHICLE": "human",
+        "OTHERSPECIES": "animal",
+        "UNRECOGNIZABLE": "unknown",
+
         "REDDEER" : "Cervus elaphus",
-        "ROEDEER" : "Capreolus",
-        "CERVIDREDORROEDEER": "Capreolus capreolus",
+        "ROEDEER" : "Capreolus capreolus",
+        "CERVIDREDORROEDEER": "Cervidae",
         "REDFOX": "Vulpes vulpes",
         "REDSQUIRREL": "Sciurus vulgaris",
         "BROWNBEAR" : "Ursus arctos",
         "PINEMARTEN": "Martes martes",
-        "BEECHMARTEN" : "Martes foina",
-        "MARTESPINEORBEECHMARTEN" : "Martes",
-        "CHAMOIS" : "Rupicapra",
+        "MARTENPINEORSTONEMARTEN" : "Martes",
+        "STONEMARTEN" : "Martes foina",
+        "CHAMOIS" : "Rupicapra rupicapra",
         "EURASIANLYNX" : "Lynx lynx",
         "WOLF" : "Canis lupus",
-        "EURASIANBADGER" : "Meles meles",
+        "EUROPEANBADGER" : "Meles meles",
         "MARMOT" : "Marmota marmota",
         "WILDBOAR" : "Sus scrofa",
         "EUROPEANHARE" : "Lepus europaeus",
-        "DOMESTICDOG" : "Canis lupus familiaris",
+        "DOMESTICDOG" : "Canis familiaris",
         "DOMESTICCAT" : "Felis catus",
-        "STOATERMINE" :  "Mustela erminea",
+        "STOAT" :  "Mustela erminea",
         "WEASEL" : "Mustela nivalis",
-        "MUSTELASTOATORWEASEL" :"Mustelidae",           # check
-        "SEMIAQUATICMUSTELIDAE" : "Mustelidae",         # check
+        "MUSTELID" : "Mustelidae",
         "BIRDGENERAL" :"Aves",
-        "OTHERSPECIES": "unknown",                      # check
-        "NOANIMAL" : "unknown",                         # check
-        "UNRECOGNIZABLE" : "unclassified",              # check
-        "HUMANORVEHICLE" : "unknown",                   # check
     }
 
     @staticmethod
