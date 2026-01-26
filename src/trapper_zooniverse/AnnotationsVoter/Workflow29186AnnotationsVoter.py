@@ -61,8 +61,12 @@ class Workflow29186AnnotationsVoter(AnnotationsVoter):
 
             if species == "Homo sapiens":
                 observationType = "human"
-            elif species in ["vehicle", "black", "unclassified", "unknown"]:
+            elif species in ["vehicle", "blank", "unclassified", "unknown"]:
                 observationType = species
+                species = ""
+            elif species == "animal":
+                observationType = "animal"
+                species = ""
             else:
                 observationType = "animal"
 

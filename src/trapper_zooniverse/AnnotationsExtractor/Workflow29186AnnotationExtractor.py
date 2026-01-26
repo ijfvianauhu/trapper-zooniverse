@@ -55,7 +55,8 @@ class Workflow29186AnnotationExtractor(AnnotationsExtractor):
         """
 
         def trapper_name(choice):
-            return Workflow29186AnnotationExtractor.zoo_to_trapper.get(choice, "unknown")
+            return Workflow29186AnnotationExtractor.zoo_to_trapper.get(choice, choice)
+
         choices = []
         k_list = []
         k_max = 3  # max number of choices allowed per user and subject (photo)
@@ -74,7 +75,7 @@ class Workflow29186AnnotationExtractor(AnnotationsExtractor):
             k_list.append(len(matches))
             sid = classifications_x_user.sid
 
-            results = [(choice, ast.literal_eval(answers)) for choice, answers in matches]
+            results = [(trapper_name(choice), ast.literal_eval(answers)) for choice, answers in matches]
             choices.extend(results)
 
         logger.debug(f"valores de k {k_list}")
